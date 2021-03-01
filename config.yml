@@ -1,5 +1,5 @@
 ---
-baseURL: "http://localhost"
+baseURL: "https://phillipcarter.dev"
 title: Phillip Carter's blog
 theme: hugo-geekblog
 pygmentsUseClasses: true
