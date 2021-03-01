@@ -1,0 +1,10 @@
+---
+footer:
+  - name: Twitter
+    icon: twitter
+    ref: "https://twitter.com/_cartermp"
+    external: true
+  - name: GitHub
+    icon: github
+    ref: "https://github.com/cartermp"
+    external: true
