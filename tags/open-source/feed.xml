@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en"><generator uri="https://gohugo.io/" version="0.81.0">Hugo</generator><title type="html">open source on Phillip Carter's blog</title><subtitle type="html">Usually writing about F#</subtitle><link href="https://phillipcarter.dev/tags/open-source/" rel="alternate" type="text/html" title="HTML"/><link href="https://phillipcarter.dev/tags/open-source/feed.xml" rel="self" type="application/atom+xml" title="Atom"/><link href="https://phillipcarter.dev/tags/open-source/feed.json" rel="alternate" type="application/json" title="Json"/><updated>2021-03-01T02:30:37+00:00</updated><author><name>Phillip Carter</name><email>pcarter@fastmail.com</email></author><id>https://phillipcarter.dev/tags/open-source/</id><entry><title type="html">The F# project-product duality</title><link href="https://phillipcarter.dev/posts/fsharp-project-product-duality/?utm_source=atom_feed" rel="alternate" type="text/html" hreflang="en"/><id>https://phillipcarter.dev/posts/fsharp-project-product-duality/</id><published>2020-12-30T00:00:00+00:00</published><updated>2021-02-28T16:22:54-08:00</updated><content type="html"><![CDATA[<p>The F# language is kind of wierd (in a good way). Born out of Microsoft Research and initially sold to the world by Microsoft as a part of Visual Studio, it now has a vibrant open source community and ecosystem around it. This puts it in a funny place. A great way to illustrate that is to visit the following links:</p>
+<ul>
+<li><a class="gblog-post__link" href="https://dotnet.microsoft.com/languages/fsharp">F# homepage on the Microsoft .NET site</a>
+</li>
+<li><a class="gblog-post__link" href="https://fsharp.org/">Homepage for F# and the F# Software Foundation</a>
+</li>
+</ul>
+<p>The first link a page on the Microsoft marketing site for .NET. The other is 100% independent of Microsoft, run by the F# Software Foundation, and has been around longer than the marketing site (ironic, given that Microsoft&rsquo;s involvement with F# came well before the F# Software Foundation).</p>
+<p>There are other ways you can see this duality play out:</p>
+<ul>
+<li>F# is delivered as a part of Visual Studio vs. F# can be built from source on most Linux distributions</li>
+<li>F# can target the .NET Framework for Windows apps vs. <a class="gblog-post__link" href="https://fable.io/">F# can target the JavaScript runtime</a>
+</li>
+<li>F# users who primarily use it for OSS vs. those who primarily use it for work (such as at a financial institution)</li>
+<li>People who use Visual Studio Pro/Enterprise or Rider vs. those who use <a class="gblog-post__link" href="https://ionide.io/">Ionide</a>
+ and Visual Studio Code</li>
+<li>F# users are participate in the F# Software Foundation vs. those who do not</li>
+<li>F# users who submit issues on GitHub vs. those who do not</li>
+</ul>
+<p>There are several other examples that I could think of if I was feeling more thoughtful. The two sides of the &ldquo;vs.&rdquo; aren&rsquo;t necessarily opposed. In fact, I know of several F# developers who have different personas depending on their work. But they are very different from one another.</p>
+<p>The rest of this post will be a short meditation on this duality. I don&rsquo;t really have a whole lot of insight to offer here. But it is a unique challenge that I face every day.</p>
+<p>F# is an open source project
+I mention this first because I think it&rsquo;s actually the most important side of the F# project-product duality. Hell, we even say it in the F# marketing page: it&rsquo;s an open source, cross-platform functional language. There you have it, open source and cross-platform. But what does that even mean?</p>
+<p>Firstly, in case you aren&rsquo;t aware, the F# compiler, F# core library, F# language service, and F# Visual Studio tooling are all 100% open source. You get to observe every bit of mind-numbing process related to flowing commits to different branches, every stupid mistake we make when we introduce a bug, and every &ldquo;whoopsie&rdquo; whenever we say something to a community member and we&rsquo;re proven wrong. And all the good stuff too, like active language development, new tooling features, and countless contributions from people all around the world.</p>
+<p>The F# repository is governed, mostly, as such:</p>
+<ul>
+<li>We have a code of conduct and we act on it if necessary. It&rsquo;d be nice if we didn&rsquo;t need it. We banned a white supremacist for sending death threats to F# users and locked any issues he filed.</li>
+<li>Issues are labeled and assigned a milestone (most of the time!). Milestones are always either &ldquo;Backlog&rdquo; or a release corresponding to a Visual Studio release. Backlog items get pulled into a release milestone if they&rsquo;re completed during the appropriate timeframe.</li>
+<li>We may not comment on an issue, often because it is a straightforward bug and just needs to get tagged correctly. But we do strive to look at everything that is filed at least once, and typically do.</li>
+<li>Code contributions usually require tests or some proof that they work if tests are silly/untenable.</li>
+<li>Performance improvements usually require evidence of the improvement to be approved. Sometimes improvements are just obvious, so we&rsquo;ll take them without evidence.</li>
+<li>Not all parts of the repo can be built everywhere, so we have several Solution files to ensure you can always build the repo in your environment of choice.</li>
+<li>The best ideas usually win out on how to do something, and they do get discussed out in the open.</li>
+<li>Sometimes an obvious improvement will be rejected, but it&rsquo;s usually for complicated reasons related to long-term maintenance and support. Sometimes the maintenance cost of adding something outweighs the benefit of users having it. It sucks, I know. But we cannot let technical debt hamstring us.</li>
+<li>We have the privilege and the curse of incorporating Visual Studio components. It comes with great testing, compelling language tools, and a much larger userbase than many open source projects. But we are tethered to its processes and this often results in improvements taking time - sometimes months - before they are actually released to users. We try to keep a steady flow of improvements constantly moving in the codebase to remidiate the impact this has.</li>
+<li>We have some internal servers that run a &ldquo;signed build&rdquo; for VS integration, it&rsquo;s closed-source, it sucks, and it sometimes stalls our infrastructure from moving forward for a month or two. We apologize, but if it makes you feel better, it slows us down too.</li>
+<li>There&rsquo;s more to it, but I think this captures most of how we work in the open. There&rsquo;s some elements of being a product involved (especially as far as Visual Studio integration is concerned), but I like to think that we&rsquo;re really just a very active and fairly well-run open source project.</li>
+</ul>
+<p>But F# as an open source project is more than just the very literal aspects of the actual F# codebase being open source. The &ldquo;F# project&rdquo; involves many other open source entities, some of which include:</p>
+<ul>
+<li>The <a class="gblog-post__link" href="https://github.com/fsprojects">fsprojects</a>
+ organization, a community-run incubation space that serves as a home for several open source projects (some of which are long past an &ldquo;incubation&rdquo; period!) and has a core group of administrators who ensure that active projects are always assigned at least one maintainer.</li>
+<li>The <a class="gblog-post__link" href="https://github.com/fslaborg?type=source">fslab</a>
+ organization, which is basically &ldquo;fsprojects but for data science and machine learning&rdquo;. Several independent projects suited towards analytical work live here, and like fsprojects, there is a core group of administrators who ensure that active projects are always assigned at least one maintainer.</li>
+<li>The <a class="gblog-post__link" href="https://fable.io/">Fable</a>
+ project and <a class="gblog-post__link" href="https://fable.io/community/">ecosystem</a>
+, which transforms F# into a JavaScript-targeting language and comes with a vibrant set of libraries for building beautiful, modern web applications in F#.</li>
+<li>The <a class="gblog-post__link" href="https://github.com/fsharp/FsAutoComplete">FsAutoComplete</a>
+ project, which powers <a class="gblog-post__link" href="https://ionide.io/">Ionide and Visual Studio Code</a>
+, and F# support in Vim and Emacs.</li>
+<li>The <a class="gblog-post__link" href="https://ionide.io/">Ionide</a>
+ project, which turns VSCode into an IDE and also provides several other awesome F# tools.</li>
+<li>The <a class="gblog-post__link" href="https://safe-stack.github.io/">SAFE stack project</a>
+, which composes several open source projects into a cohesive set that can be used to build full-stack F# apps (F# on the frontend and backend, yes!). Also comes with commercial support through several parties that contribute to SAFE.</li>
+<li>The <a class="gblog-post__link" href="https://websharper.com/">WebSharper project</a>
+, which is actually also a commercial product, where you build full-stack web apps in F#.</li>
+<li>The <a class="gblog-post__link" href="https://fsbolero.io/">bolero project</a>
+, which makes F# a WASM language (backed by a commercial entity).</li>
+<li>The <a class="gblog-post__link" href="https://github.com/JetBrains/fsharp-support">Jetbrains Rider F# plugin</a>
+ is how F# tooling works in Jetbrains Rider, powered by the same open source language service used by several other open source tools.</li>
+</ul>
+<p>There are many more, but hopefully my point about F# being an open source project matters. There are so many amazing things you can do with the language, all of which is rooted in the fact that F# is cross-platform, open source, and inviting towards a community of developers to empower them to build awesome shit. <strong>This is what being an open source project is all about</strong>.</p>
+
+
+
+<div class="gblog-post__anchorwrap">
+    <h2 id="f-is-a-product">
+        F# is a product
+        <a data-clipboard-text="https://phillipcarter.dev/posts/fsharp-project-product-duality/#f-is-a-product" class="gblog-post__anchor gblog-post__anchor--right clip" aria-label="Anchor F# is a product" href="#f-is-a-product">
+            <svg class="icon link"><use xlink:href="#link"></use></svg>
+        </a>
+    </h2>
+</div>
+
+<p>The other side of F# is very different, and also has a more storied history. In fact, much of the early history of F# is well-documented in <a class="gblog-post__link" href="https://fsharp.org/history/">The Early History of F#</a>
+, which I highly recommend reading. I won&rsquo;t discuss aspects of F# the product much before the time when I started working on it at Microsoft. This is partly because it&rsquo;s already well-documented, but also because the priorities of a product change over time, and I just don&rsquo;t know the details of what those priorities were prior to 2015.</p>
+<p>For what I wager is the majority of F# developers, F# is a product more than it is an open source project. Far more people use the F# compiler and use F# packages than contribute back. This isn&rsquo;t inherently a bad thing, it&rsquo;s just the reality of how things work. Not everyone can or wants to spend their spare time doing open source work, and most people don&rsquo;t have an employer that lets them spend work time on OSS. I really wish employers paid employees to contribute back to the tools and components they use, but most don&rsquo;t, so that&rsquo;s just how it is right now.</p>
+<p>F# the product surfaces in several ways:</p>
+<ul>
+<li>Delivered as a part of the .NET SDK, both Current and LTS trains, across the various mechanisms it can be installed</li>
+<li>Delivered as a part of the <a class="gblog-post__link" href="https://github.com/dotnet/source-build">build from source</a>
+ packaging for .NET</li>
+<li>Delivered as a part of Visual Studio</li>
+<li>Delivered as a part of Visual Studio for Mac</li>
+<li>Delivered as a part of Jetbrains Rider</li>
+<li>Delivered as NuGet packages, FSharp.Core and FSharp.Compiler.Service</li>
+</ul>
+<p>If you&rsquo;re using F# in Visual Studio, VS for Mac, or Rider then you&rsquo;re doing so under a license. Sometimes that license means it&rsquo;s 100% free (e.g., VS Community - which can be used by students, OSS developers, and small entities making under a certain threshold of revenue). But it&rsquo;s usually a paid license when you&rsquo;re using it professionally, since you&rsquo;re usually doing it for some company that makes money.</p>
+<p>When you&rsquo;re in this setting you likely care deeply about several things:</p>
+<ul>
+<li>Setup/prerequisities - Getting a developer and runtime environment set up should be straightfoward. Complex aspects of this are improved over time.</li>
+<li>Language compatibility - What compiled and ran yesterday must compile and run today.
+Tooling compatibility - IDE behaviors don&rsquo;t randomly change. Actions you performed yesterday can be performed today.</li>
+<li>Language reliability - New compiler bugs aren&rsquo;t introduced over time. Existing bugs are fixed over time.</li>
+<li>Tooling reliability - Tooling doesn&rsquo;t break with updates. Existing problems are fixed over time.
+Compiler performance - As your codebase grows, the compile times increase linearly with respect to your code size. The linear function isn&rsquo;t too high either. No exponential compile times, thank you! Compiler performance improves over time.</li>
+<li>Runtime performance - The run time of your application doesn&rsquo;t regress over time. Existing problems are resolved over time and the run time gets faster with updates.</li>
+<li>Tooling performance - As your codebase grows, you don&rsquo;t end up &ldquo;fighting the IDE&rdquo; or some other tool. Existing tooling performance problems are resolved over time, and the tools get faster too.</li>
+<li>Language features - New features that unlock certain capabilities or let you simplify an approach to a problem are regularly delivered. Existing, high-use language features are improved over time.</li>
+<li>Productivity features - New tooling features that let you see more information, navigate code, refactor code, etc. are regularly delivered. Existing features are enhanced over time.</li>
+</ul>
+<p>There&rsquo;s more, but I think that list covers the fundamentals. None of what I mentioned is exclusive to being a product. Every OSS developer cares about these things too. However, all of this can be achieved by a closed-source, proprietary language implementation and tooling. Community is not required. Extending capabilities for others to explore is not required. Having a diverse group of contributors is not required (although it does mean you need more staff on hand). And if feedback I&rsquo;ve seen over the years is any indicator, plenty of F# developers really don&rsquo;t care much about the aspects of &ldquo;F# is an open source project&rdquo;. After all, there&rsquo;s likely something not running 100% smoothly and the fact that F# can be used to build wonderful new web applications doesn&rsquo;t fix the problem they&rsquo;re seeing. Nor does any number of open source contributors adding features or fixing bugs that don&rsquo;t address the problem they&rsquo;re facing.</p>
+<p>Dealing with the &ldquo;product&rdquo; aspects of F# takes a significant amount of time for me and everyone on the F# team at Microsoft. This isn&rsquo;t exactly surprising, though. We&rsquo;re paid to improve F# the product, so we do exactly that. What does that mean in practice? A few things.</p>
+<p>First and foremost, we try to get more information out of paying customers. Are you working at a company using F# through Visual Studio? Are you paying Microsoft a lot of money through VS subscriptions, Azure subscriptions, and so on? If so, <strong>we want to hear from you</strong>. If you&rsquo;re paying a lot of money then your problems are &ldquo;premium problems&rdquo; that we prioritize above pretty much anything else. Microsoft has gone so far as to pay for me to fly out to a customer and just collect general feedback about using F# because their Azure bill was big enough for us to address general issues they might be having. In one such occaison, we found an embarassing compiler bug where we&rsquo;d stack overflow at build time. The person who told me about it didn&rsquo;t think much of it until my eyes got all wide, baffled as to why his build would fail like that. We got the bug fixed in time for the next Visual Studio update, and with it, a new F# compiler delivered with the fix across all channels. <strong>We would not have known about this issue without direct engagement</strong>.</p>
+<p>We have a <a class="gblog-post__link" href="https://docs.microsoft.com/en-us/visualstudio/ide/how-to-report-a-problem-with-visual-studio?view=vs-2019">feedback system through Visual Studio</a>
+ that can let us know if the person filing the bug is doing so from a paying account, and these are often treated with higher priority than other bugs. Exceptions to this rule are for obscure or &ldquo;the behavior sucks but it&rsquo;s by design and your use case is really just not reasonable&rdquo; issues. If it&rsquo;s one of the rare exceptional cases, we still treat replying and giving the best suggestion we can as a high priority. And in most cases, we&rsquo;ll still move it to GitHub and tag the issue as a low priority so it&rsquo;s clear how we&rsquo;ll treat it. At least then it&rsquo;s known, documented, and if more people come across it we can change the priority based on feedback. Or a curious OSS contributor can fix it themselves!</p>
+<p>If you&rsquo;re not using a direct feedback channel or the Visual Studio one, our GitHub tracker is active and we treat triage with a high priority. At this point the blending of &ldquo;F# is a product&rdquo; and &ldquo;F# is an open source project&rdquo; occurs. Once you&rsquo;re on GitHub, it&rsquo;s an open source project. If an issue is low priority for us but high priority for you, you&rsquo;ll need to make a compelling case for us to fix it. Otherwise, we strive to make it as easy as possible for you to fix it yourself and unblock your use case. We&rsquo;ll help you along the way, just like we do any other contributor.</p>
+<p>On GitHub, as mentioned earlier, we assign issues to milestones that match a Visual Studio release. Although we&rsquo;re an open source project, users of &ldquo;F# the product&rdquo; really do want to know when a fix or a new feature will become available. It lets us communicate this to people and acts as a nice historical record too. So, what gets priority? This is where things get interesting.</p>
+<p>Managing an open source project that is also a product
+Hopefully it&rsquo;s clear by now that the project-product duality of F# means that the two worlds get blended a lot. This manifests itself in several ways.</p>
+<p>Most of the time, regressions, crashes, or anything affecting a paying customer gets the top priority for the F# team. Then comes divisional initiatives, like aligning with a .NET release, shipping interop support for a critical new component in .NET, a new tooling experience deemed essential to the .NET product strategy, and so on. Then come longstanding issues that impact your experience a lot, but aren&rsquo;t really a bug so much as a fundamental capability that&rsquo;s missing or designed incorrectly. Finally, the nebulous collection of &ldquo;medium severity&rdquo; issues are dealth with, which is kind of our way of acknowledging that a bug is a legit problem we&rsquo;ll try to get it if we can, but not low enough impact that we&rsquo;ll intentionally scope it out all the time.</p>
+<p>But we also go the extra mile to ensure that &ldquo;F# as an open source project&rdquo; is healthy and improving over time. We&rsquo;re constantly tweaking the build of our repository, and usually improving it along the way. We spend a lot of time removing cruft so contributors have less concepts to understand before they can write code. We flesh out APIs that a handful of other open source projects consume, and extend new features so that they are more &ldquo;pluggable&rdquo; for tools like Fable or Bolero. We spend a significant amount of time reviewing contributions and helping people improve their contributions. We <a class="gblog-post__link" href="https://www.youtube.com/c/fsharporg/videos?view=0&amp;sort=p&amp;shelf_id=2">host webinars</a>
+ where we walk through the F# compiler, demonstrate how to fix bugs, and give hints about low-friction ways you can contribute. We also try to document things and keep everything up to date through semi-regular audits of our contribution docs.</p>
+<p>Concretely, this means we all work a lot more than just the working hours we put in for Microsoft. Does that mean we&rsquo;re overworked? I guess so. But it&rsquo;s our choice. It would be a hell of a lot easier for the F# team if F# were another closed-source product, like most of what Microsoft produces. But there&rsquo;s no way in hell we&rsquo;d ever consent to reverting back to the closed-source state that F# the product used to be in. The community we&rsquo;ve been able to connect with and help develop over time is essential. It&rsquo;s essential for F#&rsquo;s standing in the world. It&rsquo;s also essential for our own sanity. Fixing product bugs or doing performance analysis work can actually be quite therapeutic when the person you&rsquo;re fixing it for is positive, engaged, and excited to help. It makes coding fun, and even though it&rsquo;s still &ldquo;product work&rdquo; it&rsquo;s rewarding in its own right. That said, we do tend to be a lot more choosy about the things we work on when it&rsquo;s not working hours!</p>
+<p>There are two traps we&rsquo;ve fallen into in the past, and are sure to continue to fall into in the future. The first is not treating a paying customer&rsquo;s issue with the appropriate amount of priority. In the world of open source, most people are consuming something for free. The maintainers have zero obligation to actually fix their issues. However, that is not true for a customer using a product! Maintainers absolutely have an obligation to fix their issues. The inverse can also be a problem. Treating curious but ultimately unimportant problems that people identify as if they impact paying customers is a dangerous trap to fall into. We try to do our best, but please be aware that this is just part and parcel of being open source.</p>
+<p>Have ideas for how to approach this duality better? I&rsquo;d love to hear about it. You can reach me on twitter or over email.</p>
+]]></content><category scheme="https://phillipcarter.dev/tags/fsharp" term="fsharp" label="fsharp"/><category scheme="https://phillipcarter.dev/tags/open-source" term="open-source" label="open source"/></entry></feed>

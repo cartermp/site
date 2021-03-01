@@ -1,0 +1,594 @@
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en"><generator uri="https://gohugo.io/" version="0.81.0">Hugo</generator><title type="html">Visual Studio on Phillip Carter's blog</title><subtitle type="html">Usually writing about F#</subtitle><link href="https://phillipcarter.dev/tags/visual-studio/" rel="alternate" type="text/html" title="HTML"/><link href="https://phillipcarter.dev/tags/visual-studio/feed.xml" rel="self" type="application/atom+xml" title="Atom"/><link href="https://phillipcarter.dev/tags/visual-studio/feed.json" rel="alternate" type="application/json" title="Json"/><updated>2021-03-01T02:30:37+00:00</updated><author><name>Phillip Carter</name><email>pcarter@fastmail.com</email></author><id>https://phillipcarter.dev/tags/visual-studio/</id><entry><title type="html">How to make an F# code fixer</title><link href="https://phillipcarter.dev/posts/how-to-make-an-fsharp-code-fixer/?utm_source=atom_feed" rel="alternate" type="text/html" hreflang="en"/><id>https://phillipcarter.dev/posts/how-to-make-an-fsharp-code-fixer/</id><published>2020-12-04T00:00:00+00:00</published><updated>2021-02-28T16:22:54-08:00</updated><content type="html"><![CDATA[<p>Note: this post does not apply to Jetbrains Rider. Rider uses its own engine for representing F# syntax expressions and has its own strongly-typed API for traversing and manipulating F# expressions.</p>
+<p>F# tooling in Visual Studio and Visual Studio Code supports a variety quick fixes for fixing an error in your code. Here&rsquo;s an example of one:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="flex justify-center">
+<figure class="gblog-post__figure">
+    <a class="gblog-post__link--raw" href="/posts/how-to-make-an-fsharp-code-fixer/images/wrap-expression-in-parentheses.png">
+        <img
+            loading="lazy"
+            
+            src="/posts/how-to-make-an-fsharp-code-fixer/images/wrap-expression-in-parentheses_hu8e09b360e18351fba4f756a57821447e_57981_600x0_resize_box_2.png" alt="Wrap Expression in Parentheses Quick Fix"
+            />
+    </a>
+    
+    <figcaption>Wrap Expression in Parentheses Quick Fix</figcaption>
+    
+</figure>
+</div>
+
+
+<p>Pretty neat, right? This post will walk through the essentials of implementing a quick fix like this in either Visual Studio or VSCode.</p>
+
+
+
+<div class="gblog-post__anchorwrap">
+    <h2 id="the-essential-pieces-of-an-editor-quick-fixer">
+        The essential pieces of an editor Quick Fixer
+        <a data-clipboard-text="https://phillipcarter.dev/posts/how-to-make-an-fsharp-code-fixer/#the-essential-pieces-of-an-editor-quick-fixer" class="gblog-post__anchor gblog-post__anchor--right clip" aria-label="Anchor The essential pieces of an editor Quick Fixer" href="#the-essential-pieces-of-an-editor-quick-fixer">
+            <svg class="icon link"><use xlink:href="#link"></use></svg>
+        </a>
+    </h2>
+</div>
+
+<p>Quick Fixes are pretty straightforward. They are comprised of 3 things:</p>
+<ol>
+<li>An editing environment that can &ldquo;listen&rdquo; for specific diagnostics (tracked by ID) and allow you to plug into that engine</li>
+<li>A &ldquo;context&rdquo; for a Quick Fix that crucially contains the span/range of text in a document corresponding to an error or warning</li>
+<li>Some code that registers itself as a plugin for that diagnostic ID and/or message contents, and/or some other condition (more on that later)</li>
+<li>Some code that performs logic that rewrites a small section of the user&rsquo;s code to fix an issue
+And that&rsquo;s it! The lifecycle is pretty simple, too:</li>
+</ol>
+<p>Periodically, an editing environment calls into the F# language service to process syntax and typecheck. This happens most often when you&rsquo;re typing (after a very short delay to account for the typing). When it&rsquo;s finished and there are syntax or typechecking errors, it raises appropriate diagnostics for the editing environment to report.</p>
+<p>When this happens, any quick fix that is registered to &ldquo;listen&rdquo; to a particular diagnostic is made available to be triggered if and only if that diagnostic was raised. When the user does something like click a lightbulb in an editor or hit the right key command, all Quick Fixes that are available at that position are executed asynchronously, and the syntax transformation that they offer is also made available.</p>
+
+
+
+<div class="gblog-post__anchorwrap">
+    <h2 id="each-editor-has-their-own-apis">
+        Each editor has their own APIs
+        <a data-clipboard-text="https://phillipcarter.dev/posts/how-to-make-an-fsharp-code-fixer/#each-editor-has-their-own-apis" class="gblog-post__anchor gblog-post__anchor--right clip" aria-label="Anchor Each editor has their own APIs" href="#each-editor-has-their-own-apis">
+            <svg class="icon link"><use xlink:href="#link"></use></svg>
+        </a>
+    </h2>
+</div>
+
+<p>First things first: you can&rsquo;t just copy/paste a quick fix from Visual Studio into VSCode or vice/versa. Although a quick fix can share the same logic across editors, it must ultimately bind to the particular editor API that hosts it.</p>
+<p>In the case of Visual Studio tooling for F#, the skeleton that wraps any custom logic generally looks like this:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="k">namespace</span> <span class="nn">Microsoft</span><span class="p">.</span><span class="nn">VisualStudio</span><span class="p">.</span><span class="nn">FSharp</span><span class="p">.</span><span class="n">Editor</span>
+
+<span class="k">open</span> <span class="nn">System.Composition</span>
+<span class="k">open</span> <span class="nn">System.Threading</span>
+<span class="k">open</span> <span class="nn">System.Threading.Tasks</span>
+
+<span class="k">open</span> <span class="nn">Microsoft.CodeAnalysis.Text</span>
+<span class="k">open</span> <span class="nn">Microsoft.CodeAnalysis.CodeFixes</span>
+<span class="k">open</span> <span class="nn">Microsoft.CodeAnalysis.CodeActions</span>
+
+<span class="o">[&lt;</span><span class="n">ExportCodeFixProvider</span><span class="o">(</span><span class="nn">FSharpConstants</span><span class="p">.</span><span class="n">FSharpLanguageName</span><span class="o">,</span> <span class="n">Name</span> <span class="o">=</span> <span class="s">&#34;NAME HERE&#34;</span><span class="o">);</span> <span class="n">Shared</span><span class="o">&gt;]</span>
+<span class="k">type</span> <span class="nc">internal</span> <span class="n">FSharpYourQuickFixNameHereFixProvider</span><span class="bp">()</span> <span class="o">=</span>
+    <span class="k">inherit</span> <span class="n">CodeFixProvider</span><span class="bp">()</span>
+
+    <span class="c1">// Any applicable diagnostic IDs go here
+</span><span class="c1"></span>    <span class="k">let</span> <span class="nv">fixableDiagnosticIds</span> <span class="o">=</span> <span class="n">set</span> <span class="o">[</span><span class="s">&#34;FSXYZ&#34;</span><span class="o">]</span>
+
+    <span class="k">override</span> <span class="n">_</span><span class="p">.</span><span class="nf">FixableDiagnosticIds</span> <span class="o">=</span> <span class="nn">Seq</span><span class="p">.</span><span class="n">toImmutableArray</span> <span class="n">fixableDiagnosticIds</span>
+
+    <span class="k">override</span> <span class="n">this</span><span class="p">.</span><span class="nf">RegisterCodeFixesAsync</span> <span class="n">context</span> <span class="o">:</span> <span class="n">Task</span> <span class="o">=</span>
+        <span class="n">async</span> <span class="o">{</span>
+            <span class="c1">// Title comes from a resource file
+</span><span class="c1"></span>            <span class="k">let</span> <span class="nv">title</span> <span class="o">=</span> <span class="nn">SR</span><span class="p">.</span><span class="n">WrapExpressionInParentheses</span><span class="bp">()</span>
+
+            <span class="c1">// Custom logic can be written or called here
+</span><span class="c1"></span>
+            <span class="k">let</span> <span class="nv">applicableIDs</span> <span class="o">=</span>
+                <span class="n">context</span><span class="o">.</span><span class="n">Diagnostics</span>
+                <span class="o">|&gt;</span> <span class="nn">Seq</span><span class="p">.</span><span class="n">filter</span> <span class="o">(</span><span class="k">fun</span> <span class="n">x</span> <span class="o">-&gt;</span> <span class="n">this</span><span class="o">.</span><span class="n">FixableDiagnosticIds</span><span class="o">.</span><span class="n">Contains</span> <span class="n">x</span><span class="o">.</span><span class="n">Id</span><span class="o">)</span>
+                <span class="o">|&gt;</span> <span class="nn">Seq</span><span class="p">.</span><span class="n">toImmutableArray</span>
+
+            <span class="n">context</span><span class="o">.</span><span class="n">RegisterCodeFix</span><span class="o">(</span>
+                <span class="nn">CodeAction</span><span class="p">.</span><span class="n">Create</span><span class="o">(</span>
+                    <span class="n">title</span><span class="o">,</span>
+                    <span class="o">(</span><span class="k">fun</span> <span class="o">(</span><span class="n">cancellationToken</span><span class="o">:</span> <span class="n">CancellationToken</span><span class="o">)</span> <span class="o">-&gt;</span>
+                        <span class="n">async</span> <span class="o">{</span>
+                            <span class="k">let!</span> <span class="nv">sourceText</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">Document</span><span class="o">.</span><span class="n">GetTextAsync</span><span class="o">(</span><span class="n">cancellationToken</span><span class="o">)</span> <span class="o">|&gt;</span> <span class="nn">Async</span><span class="p">.</span><span class="n">AwaitTask</span>
+                            <span class="k">return</span> <span class="n">context</span><span class="o">.</span><span class="n">Document</span><span class="o">.</span><span class="n">WithText</span><span class="o">(</span><span class="c">(* TODO - code that changes text *)</span><span class="o">)</span>
+                        <span class="o">}</span> <span class="o">|&gt;</span> <span class="nn">RoslynHelpers</span><span class="p">.</span><span class="n">StartAsyncAsTask</span><span class="o">(</span><span class="n">cancellationToken</span><span class="o">)),</span>
+                    <span class="n">title</span><span class="o">),</span>
+                    <span class="n">applicableIDs</span><span class="o">)</span>
+        <span class="o">}</span> <span class="o">|&gt;</span> <span class="nn">RoslynHelpers</span><span class="p">.</span><span class="n">StartAsyncUnitAsTask</span><span class="o">(</span><span class="n">context</span><span class="o">.</span><span class="n">CancellationToken</span><span class="o">)</span>
+</code></pre></div><p>It may seem like there&rsquo;s a lot going on here, but most of it is just glue code to ensure that everything is asynchronous and cancellable and runs in the Roslyn workspace host inside of Visual Studio. They key pieces are there:</p>
+<p>Configuring a set of applicable diagnostics for the code fix
+Code that registers a quick fix for the applicable diagnostics (asynchronous and cancellable)
+Spots in the code to enter in custom logic and logic for manipulating user code
+In VSCode (technically FsAutocomplete), a quick fix skeleton might look similar to this:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="k">let</span> <span class="nv">yourCustomeCodeFix</span> <span class="o">(</span><span class="n">getFileLines</span><span class="o">:</span> <span class="kt">string</span> <span class="o">-&gt;</span> <span class="n">Result</span><span class="o">&lt;</span><span class="kt">string</span> <span class="bp">[]</span><span class="o">,</span> <span class="o">_&gt;):</span> <span class="n">CodeFix</span> <span class="o">=</span>
+    <span class="n">ifDiagnosticByCode</span>
+        <span class="o">(</span><span class="k">fun</span> <span class="n">diagnostic</span> <span class="n">codeActionParams</span> <span class="o">-&gt;</span>
+            <span class="k">match</span> <span class="n">getFileLines</span> <span class="o">(</span><span class="n">codeActionParams</span><span class="o">.</span><span class="n">TextDocument</span><span class="o">.</span><span class="n">GetFilePath</span><span class="bp">()</span><span class="o">)</span> <span class="k">with</span>
+            <span class="o">|</span> <span class="n">Ok</span> <span class="n">lines</span> <span class="o">-&gt;</span>
+                <span class="k">let</span> <span class="nv">erroringExpression</span> <span class="o">=</span> <span class="n">getText</span> <span class="n">lines</span> <span class="n">diagnostic</span><span class="o">.</span><span class="n">Range</span>
+                <span class="n">async</span><span class="o">.</span><span class="n">Return</span> <span class="o">[</span> <span class="o">{</span> <span class="n">Title</span> <span class="o">=</span> <span class="s">&#34;your title here&#34;</span>
+                                 <span class="n">File</span> <span class="o">=</span> <span class="n">codeActionParams</span><span class="o">.</span><span class="n">TextDocument</span>
+                                 <span class="n">SourceDiagnostic</span> <span class="o">=</span> <span class="n">Some</span> <span class="n">diagnostic</span>
+                                 <span class="n">Edits</span> <span class="o">=</span>
+                                    <span class="o">[|</span> <span class="o">{</span> <span class="n">Range</span> <span class="o">=</span> <span class="n">diagnostic</span><span class="o">.</span><span class="n">Range</span>
+                                         <span class="n">NewText</span> <span class="o">=</span> <span class="s">&#34;&#34;</span> <span class="c">(* TODO - define new text *)</span> <span class="o">}</span> <span class="o">|]</span>
+                                 <span class="n">Kind</span> <span class="o">=</span> <span class="n">Fix</span> <span class="o">}</span> <span class="o">]</span>
+            <span class="o">|</span> <span class="n">Error</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="n">async</span><span class="o">.</span><span class="n">Return</span> <span class="bp">[]</span><span class="o">)</span>
+        <span class="o">(</span><span class="nn">Set</span><span class="p">.</span><span class="n">ofList</span> <span class="o">[</span> <span class="s">&#34;DIAGNOSTIC-IDS-HERE&#34;</span> <span class="o">])</span>
+</code></pre></div><p>Due to some nice helper functionality it&rsquo;s less code, but the basic pieces are all the same.</p>
+
+
+
+<div class="gblog-post__anchorwrap">
+    <h2 id="easy-quick-fixer-example-just-manipulating-text">
+        Easy quick fixer example: just manipulating text
+        <a data-clipboard-text="https://phillipcarter.dev/posts/how-to-make-an-fsharp-code-fixer/#easy-quick-fixer-example-just-manipulating-text" class="gblog-post__anchor gblog-post__anchor--right clip" aria-label="Anchor Easy quick fixer example: just manipulating text" href="#easy-quick-fixer-example-just-manipulating-text">
+            <svg class="icon link"><use xlink:href="#link"></use></svg>
+        </a>
+    </h2>
+</div>
+
+<p>Sometimes, a quick fix can be trivial to implement because all you need to do is change an obviously incorrect span of text in a user&rsquo;s source code. The following example comes from a very common error:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="k">let</span> <span class="nv">rng</span> <span class="o">=</span> <span class="nn">System</span><span class="p">.</span><span class="n">Random</span><span class="bp">()</span>
+<span class="k">let</span> <span class="nv">makeBigger</span> <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">*</span> <span class="n">2</span>
+<span class="n">makeBigger</span> <span class="n">rng</span><span class="o">.</span><span class="n">Next</span><span class="o">(</span><span class="n">5</span><span class="o">)</span>
+</code></pre></div><p>This code seems like it might be right, but the compiler complains because it thinks that the <code>(5)</code> is another argument being passed to <code>makeBigger</code>. It&rsquo;s a &ldquo;classic&rdquo; F# compiler error that is usually resolved by adding parentheses. So, why not make a Code Fix that adds the parentheses? As it turns out, that is trivial.</p>
+<p>Here&rsquo;s how it is done in Visual Studio:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="k">namespace</span> <span class="nn">Microsoft</span><span class="p">.</span><span class="nn">VisualStudio</span><span class="p">.</span><span class="nn">FSharp</span><span class="p">.</span><span class="n">Editor</span>
+
+<span class="k">open</span> <span class="nn">System.Composition</span>
+<span class="k">open</span> <span class="nn">System.Threading</span>
+<span class="k">open</span> <span class="nn">System.Threading.Tasks</span>
+
+<span class="k">open</span> <span class="nn">Microsoft.CodeAnalysis.Text</span>
+<span class="k">open</span> <span class="nn">Microsoft.CodeAnalysis.CodeFixes</span>
+<span class="k">open</span> <span class="nn">Microsoft.CodeAnalysis.CodeActions</span>
+
+<span class="o">[&lt;</span><span class="n">ExportCodeFixProvider</span><span class="o">(</span><span class="nn">FSharpConstants</span><span class="p">.</span><span class="n">FSharpLanguageName</span><span class="o">,</span> <span class="n">Name</span> <span class="o">=</span> <span class="s">&#34;AddParentheses&#34;</span><span class="o">);</span> <span class="n">Shared</span><span class="o">&gt;]</span>
+<span class="k">type</span> <span class="nc">internal</span> <span class="n">FSharpWrapExpressionInParenthesesFixProvider</span><span class="bp">()</span> <span class="o">=</span>
+    <span class="k">inherit</span> <span class="n">CodeFixProvider</span><span class="bp">()</span>
+
+    <span class="c1">// FS0597 is the ID for the diagnostic that gets triggered
+</span><span class="c1"></span>    <span class="k">let</span> <span class="nv">fixableDiagnosticIds</span> <span class="o">=</span> <span class="n">set</span> <span class="o">[</span><span class="s">&#34;FS0597&#34;</span><span class="o">]</span>
+
+    <span class="k">override</span> <span class="n">_</span><span class="p">.</span><span class="nf">FixableDiagnosticIds</span> <span class="o">=</span> <span class="nn">Seq</span><span class="p">.</span><span class="n">toImmutableArray</span> <span class="n">fixableDiagnosticIds</span>
+
+    <span class="k">override</span> <span class="n">this</span><span class="p">.</span><span class="nf">RegisterCodeFixesAsync</span> <span class="n">context</span> <span class="o">:</span> <span class="n">Task</span> <span class="o">=</span>
+        <span class="n">async</span> <span class="o">{</span>
+            <span class="c1">// Title comes from a resource file
+</span><span class="c1"></span>            <span class="k">let</span> <span class="nv">title</span> <span class="o">=</span> <span class="nn">SR</span><span class="p">.</span><span class="n">WrapExpressionInParentheses</span><span class="bp">()</span>
+
+            <span class="k">let</span> <span class="nv">applicableIDs</span> <span class="o">=</span>
+                <span class="n">context</span><span class="o">.</span><span class="n">Diagnostics</span>
+                <span class="o">|&gt;</span> <span class="nn">Seq</span><span class="p">.</span><span class="n">filter</span> <span class="o">(</span><span class="k">fun</span> <span class="n">x</span> <span class="o">-&gt;</span> <span class="n">this</span><span class="o">.</span><span class="n">FixableDiagnosticIds</span><span class="o">.</span><span class="n">Contains</span> <span class="n">x</span><span class="o">.</span><span class="n">Id</span><span class="o">)</span>
+                <span class="o">|&gt;</span> <span class="nn">Seq</span><span class="p">.</span><span class="n">toImmutableArray</span>
+
+            <span class="c1">// This will wrap a range of text in parentheses
+</span><span class="c1"></span>            <span class="k">let</span> <span class="nv">getChangedText</span> <span class="o">(</span><span class="n">sourceText</span><span class="o">:</span> <span class="n">SourceText</span><span class="o">)</span> <span class="o">=</span>
+                <span class="n">sourceText</span><span class="o">.</span><span class="n">WithChanges</span><span class="o">(</span><span class="n">TextChange</span><span class="o">(</span><span class="n">TextSpan</span><span class="o">(</span><span class="n">context</span><span class="o">.</span><span class="n">Span</span><span class="o">.</span><span class="n">Start</span><span class="o">,</span> <span class="n">0</span><span class="o">),</span> <span class="s">&#34;(&#34;</span><span class="o">))</span>
+                          <span class="o">.</span><span class="n">WithChanges</span><span class="o">(</span><span class="n">TextChange</span><span class="o">(</span><span class="n">TextSpan</span><span class="o">(</span><span class="n">context</span><span class="o">.</span><span class="n">Span</span><span class="o">.</span><span class="n">End</span><span class="o">,</span> <span class="n">0</span><span class="o">),</span> <span class="s">&#34;)&#34;</span><span class="o">))</span>
+
+            <span class="n">context</span><span class="o">.</span><span class="n">RegisterCodeFix</span><span class="o">(</span>
+                <span class="nn">CodeAction</span><span class="p">.</span><span class="n">Create</span><span class="o">(</span>
+                    <span class="n">title</span><span class="o">,</span>
+                    <span class="o">(</span><span class="k">fun</span> <span class="o">(</span><span class="n">cancellationToken</span><span class="o">:</span> <span class="n">CancellationToken</span><span class="o">)</span> <span class="o">-&gt;</span>
+                        <span class="n">async</span> <span class="o">{</span>
+                            <span class="k">let!</span> <span class="nv">sourceText</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">Document</span><span class="o">.</span><span class="n">GetTextAsync</span><span class="o">(</span><span class="n">cancellationToken</span><span class="o">)</span> <span class="o">|&gt;</span> <span class="nn">Async</span><span class="p">.</span><span class="n">AwaitTask</span>
+                            <span class="k">return</span> <span class="n">context</span><span class="o">.</span><span class="n">Document</span><span class="o">.</span><span class="n">WithText</span><span class="o">(</span><span class="n">getChangedText</span> <span class="n">sourceText</span><span class="o">)</span>
+                        <span class="o">}</span> <span class="o">|&gt;</span> <span class="nn">RoslynHelpers</span><span class="p">.</span><span class="n">StartAsyncAsTask</span><span class="o">(</span><span class="n">cancellationToken</span><span class="o">)),</span>
+                    <span class="n">title</span><span class="o">),</span>
+                    <span class="n">applicableIDs</span><span class="o">)</span>
+        <span class="o">}</span> <span class="o">|&gt;</span> <span class="nn">RoslynHelpers</span><span class="p">.</span><span class="n">StartAsyncUnitAsTask</span><span class="o">(</span><span class="n">context</span><span class="o">.</span><span class="n">CancellationToken</span><span class="o">)</span>
+</code></pre></div><p>Because the diagnostic itself has a range that encapsulates the entire troublesome expression, all we need to do is wrap parentheses around that range in a document.</p>
+<p>The same quick fix in VSCode looks like this:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="sd">/// a codefix that parenthesizes a member expression that needs it
+</span><span class="sd"></span><span class="k">let</span> <span class="nv">parenthesizeExpression</span> <span class="o">(</span><span class="n">getFileLines</span><span class="o">:</span> <span class="kt">string</span> <span class="o">-&gt;</span> <span class="n">Result</span><span class="o">&lt;</span><span class="kt">string</span> <span class="bp">[]</span><span class="o">,</span> <span class="o">_&gt;):</span> <span class="n">CodeFix</span> <span class="o">=</span>
+  <span class="n">ifDiagnosticByCode</span>
+    <span class="o">(</span><span class="k">fun</span> <span class="n">diagnostic</span> <span class="n">codeActionParams</span> <span class="o">-&gt;</span>
+      <span class="k">match</span> <span class="n">getFileLines</span> <span class="o">(</span><span class="n">codeActionParams</span><span class="o">.</span><span class="n">TextDocument</span><span class="o">.</span><span class="n">GetFilePath</span><span class="bp">()</span><span class="o">)</span> <span class="k">with</span>
+      <span class="o">|</span> <span class="n">Ok</span> <span class="n">lines</span> <span class="o">-&gt;</span>
+          <span class="k">let</span> <span class="nv">erroringExpression</span> <span class="o">=</span> <span class="n">getText</span> <span class="n">lines</span> <span class="n">diagnostic</span><span class="o">.</span><span class="n">Range</span>
+          <span class="n">async</span><span class="o">.</span><span class="n">Return</span> <span class="o">[</span> <span class="o">{</span> <span class="n">Title</span> <span class="o">=</span> <span class="s">&#34;Wrap expression in parentheses&#34;</span>
+                           <span class="n">File</span> <span class="o">=</span> <span class="n">codeActionParams</span><span class="o">.</span><span class="n">TextDocument</span>
+                           <span class="n">SourceDiagnostic</span> <span class="o">=</span> <span class="n">Some</span> <span class="n">diagnostic</span>
+                           <span class="n">Edits</span> <span class="o">=</span>
+                               <span class="o">[|</span> <span class="o">{</span> <span class="n">Range</span> <span class="o">=</span> <span class="n">diagnostic</span><span class="o">.</span><span class="n">Range</span>
+                                    <span class="c1">// Using a string interpolation to supply new text
+</span><span class="c1"></span>                                    <span class="n">NewText</span> <span class="o">=</span> <span class="o">$</span><span class="s">&#34;(%s{erroringExpression})&#34;</span> <span class="o">}</span> <span class="o">|]</span>
+                                    <span class="n">Kind</span> <span class="o">=</span> <span class="n">Fix</span> <span class="o">}</span> <span class="o">]</span>
+      <span class="o">|</span> <span class="n">Error</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="n">async</span><span class="o">.</span><span class="n">Return</span> <span class="bp">[]</span><span class="o">)</span>
+    <span class="o">(</span><span class="nn">Set</span><span class="p">.</span><span class="n">ofList</span> <span class="o">[</span> <span class="s">&#34;597&#34;</span> <span class="o">])</span>
+</code></pre></div><p>This kind of easy quick fix can be written becase we have all the information we need right there. However, not every quick fix can be written so easily.</p>
+
+
+
+<div class="gblog-post__anchorwrap">
+    <h2 id="harder-quick-fixer-example-scanning-the-text-in-a-document">
+        Harder quick fixer example: scanning the text in a document
+        <a data-clipboard-text="https://phillipcarter.dev/posts/how-to-make-an-fsharp-code-fixer/#harder-quick-fixer-example-scanning-the-text-in-a-document" class="gblog-post__anchor gblog-post__anchor--right clip" aria-label="Anchor Harder quick fixer example: scanning the text in a document" href="#harder-quick-fixer-example-scanning-the-text-in-a-document">
+            <svg class="icon link"><use xlink:href="#link"></use></svg>
+        </a>
+    </h2>
+</div>
+
+<p>Sometimes the error range for a diagnostic isn&rsquo;t enough information to inform a quick fix. But not all is lost! Sometimes all you have to do is scan through a document until you find something that gives you the information you need.</p>
+<p>Consider the following error:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="o">[&lt;</span><span class="n">EntryPoint</span><span class="o">&gt;]</span>
+<span class="k">let</span> <span class="nv">main</span> <span class="n">argv</span> <span class="o">=</span>
+    <span class="c1">// &#39;argv -1&#39; is an error
+</span><span class="c1"></span>    <span class="c1">// The range of the error, however, is only &#39;argv&#39;
+</span><span class="c1"></span>    <span class="k">for</span> <span class="n">x</span> <span class="o">=</span> <span class="n">0</span> <span class="k">to</span> <span class="n">argv</span> <span class="o">-</span><span class="n">1</span> <span class="k">do</span>
+        <span class="n">printfn</span> <span class="s">&#34;uuuhhhhh&#34;</span>
+</code></pre></div><p>The compiler will complain because it things you&rsquo;re calling argv as a function and passing <code>-1</code> to it. This can happen because <code>-</code> is both a binary and a unary operator, and the F# parser parses <code>-1</code> as a negation on 1, and the entire text of <code>-1</code> as a value being passed to argv. Since argv is not a function, this is obviously not correct.</p>
+<p>Because the compiler error&rsquo;s range corresponds to argv, we don&rsquo;t actually have enough information to know that we can place a space between the <code>-</code> and the <code>1</code>. In fact, based on the error range being only for argv, we don&rsquo;t even know where in source the <code>-1</code> is! So we&rsquo;ll not only need to find its location, but also ensure that the next construct that comes after argv is indeed a <code>-</code>.</p>
+<p>Luckily, this can be done as a recursive function or loop. Here&rsquo;s an example of scanning forward past the span corresponding to the diagnostic using Visual Studio APIs:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="k">let</span> <span class="nv">pos</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">Span</span><span class="o">.</span><span class="n">End</span> <span class="o">+</span> <span class="n">1</span>
+
+<span class="k">let</span> <span class="nv">nextNonWhitespaceText</span> <span class="o">=</span>
+    <span class="k">let</span> <span class="nv">rec</span> <span class="n">loop</span> <span class="n">str</span> <span class="n">pos</span> <span class="o">=</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="o">(</span><span class="nn">String</span><span class="p">.</span><span class="n">IsNullOrWhiteSpace</span><span class="o">(</span><span class="n">str</span><span class="o">))</span> <span class="k">then</span>
+            <span class="n">str</span>
+        <span class="k">else</span>
+            <span class="n">loop</span> <span class="o">(</span><span class="n">sourceText</span><span class="o">.</span><span class="n">GetSubText</span><span class="o">(</span><span class="n">TextSpan</span><span class="o">(</span><span class="n">pos</span> <span class="o">+</span> <span class="n">1</span><span class="o">,</span> <span class="n">1</span><span class="o">)))</span> <span class="o">(</span><span class="n">pos</span> <span class="o">+</span> <span class="n">1</span><span class="o">)</span>
+    <span class="n">loop</span> <span class="o">(</span><span class="n">sourceText</span><span class="o">.</span><span class="n">GetSubText</span><span class="o">(</span><span class="n">TextSpan</span><span class="o">(</span><span class="n">pos</span><span class="o">,</span> <span class="n">1</span><span class="o">)))</span> <span class="n">pos</span>
+</code></pre></div><p>This will grab a span of text that&rsquo;s exactly one character long, check it, and keep going until it&rsquo;s not whitespace. We can then check that nextNonWhitespaceText is equal to <code>-</code>. If it is, we can trigger a code fix! Here&rsquo;s how the entire code fixer can look:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="k">namespace</span> <span class="nn">Microsoft</span><span class="p">.</span><span class="nn">VisualStudio</span><span class="p">.</span><span class="nn">FSharp</span><span class="p">.</span><span class="n">Editor</span>
+
+<span class="k">open</span> <span class="nn">System</span>
+<span class="k">open</span> <span class="nn">System.Composition</span>
+<span class="k">open</span> <span class="nn">System.Threading.Tasks</span>
+
+<span class="k">open</span> <span class="nn">Microsoft.CodeAnalysis.Text</span>
+<span class="k">open</span> <span class="nn">Microsoft.CodeAnalysis.CodeFixes</span>
+
+<span class="o">[&lt;</span><span class="n">ExportCodeFixProvider</span><span class="o">(</span><span class="nn">FSharpConstants</span><span class="p">.</span><span class="n">FSharpLanguageName</span><span class="o">,</span> <span class="n">Name</span> <span class="o">=</span> <span class="s">&#34;ChangePrefixNegationToInfixSubtraction&#34;</span><span class="o">);</span> <span class="n">Shared</span><span class="o">&gt;]</span>
+<span class="k">type</span> <span class="nc">internal</span> <span class="n">FSharpChangePrefixNegationToInfixSubtractionodeFixProvider</span><span class="bp">()</span> <span class="o">=</span>
+    <span class="k">inherit</span> <span class="n">CodeFixProvider</span><span class="bp">()</span>
+
+    <span class="k">let</span> <span class="nv">fixableDiagnosticIds</span> <span class="o">=</span> <span class="n">set</span> <span class="o">[</span><span class="s">&#34;FS0003&#34;</span><span class="o">]</span>
+
+    <span class="k">override</span> <span class="n">_</span><span class="p">.</span><span class="nf">FixableDiagnosticIds</span> <span class="o">=</span> <span class="nn">Seq</span><span class="p">.</span><span class="n">toImmutableArray</span> <span class="n">fixableDiagnosticIds</span>
+
+    <span class="k">override</span> <span class="n">_</span><span class="p">.</span><span class="nf">RegisterCodeFixesAsync</span> <span class="n">context</span> <span class="o">:</span> <span class="n">Task</span> <span class="o">=</span>
+        <span class="n">asyncMaybe</span> <span class="o">{</span>
+            <span class="k">let</span> <span class="nv">diagnostics</span> <span class="o">=</span>
+                <span class="n">context</span><span class="o">.</span><span class="n">Diagnostics</span>
+                <span class="o">|&gt;</span> <span class="nn">Seq</span><span class="p">.</span><span class="n">filter</span> <span class="o">(</span><span class="k">fun</span> <span class="n">x</span> <span class="o">-&gt;</span> <span class="n">fixableDiagnosticIds</span> <span class="o">|&gt;</span> <span class="nn">Set</span><span class="p">.</span><span class="n">contains</span> <span class="n">x</span><span class="o">.</span><span class="n">Id</span><span class="o">)</span>
+                <span class="o">|&gt;</span> <span class="nn">Seq</span><span class="p">.</span><span class="n">toImmutableArray</span>
+
+            <span class="k">let!</span> <span class="nv">sourceText</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">Document</span><span class="o">.</span><span class="n">GetTextAsync</span><span class="o">(</span><span class="n">context</span><span class="o">.</span><span class="n">CancellationToken</span><span class="o">)</span>
+
+            <span class="c1">// End of &#39;argv&#39;, in the case of the example above
+</span><span class="c1"></span>            <span class="k">let</span> <span class="nv">pos</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">Span</span><span class="o">.</span><span class="n">End</span> <span class="o">+</span> <span class="n">1</span>
+
+            <span class="c1">// This won&#39;t ever actually happen, but it&#39;s good to check
+</span><span class="c1"></span>            <span class="k">do</span><span class="o">!</span> <span class="nn">Option</span><span class="p">.</span><span class="n">guard</span> <span class="o">(</span><span class="n">pos</span> <span class="o">&lt;</span> <span class="n">sourceText</span><span class="o">.</span><span class="n">Length</span><span class="o">)</span>
+
+            <span class="k">let</span> <span class="nv">nextNonWhitespaceText</span> <span class="o">=</span>
+                <span class="k">let</span> <span class="nv">rec</span> <span class="n">loop</span> <span class="n">str</span> <span class="n">pos</span> <span class="o">=</span>
+                    <span class="k">if</span> <span class="ow">not</span> <span class="o">(</span><span class="nn">String</span><span class="p">.</span><span class="n">IsNullOrWhiteSpace</span><span class="o">(</span><span class="n">str</span><span class="o">))</span> <span class="k">then</span>
+                        <span class="n">str</span>
+                    <span class="k">else</span>
+                        <span class="n">loop</span> <span class="o">(</span><span class="n">sourceText</span><span class="o">.</span><span class="n">GetSubText</span><span class="o">(</span><span class="n">TextSpan</span><span class="o">(</span><span class="n">pos</span> <span class="o">+</span> <span class="n">1</span><span class="o">,</span> <span class="n">1</span><span class="o">)))</span> <span class="o">(</span><span class="n">pos</span> <span class="o">+</span> <span class="n">1</span><span class="o">)</span>
+                <span class="n">loop</span> <span class="o">(</span><span class="n">sourceText</span><span class="o">.</span><span class="n">GetSubText</span><span class="o">(</span><span class="n">TextSpan</span><span class="o">(</span><span class="n">pos</span><span class="o">,</span> <span class="n">1</span><span class="o">)))</span> <span class="n">pos</span>
+
+            <span class="c1">// Bail if this isn&#39;t a negation
+</span><span class="c1"></span>            <span class="k">do</span><span class="o">!</span> <span class="nn">Option</span><span class="p">.</span><span class="n">guard</span> <span class="o">(</span><span class="n">nextNonWhitespaceText</span> <span class="o">=</span> <span class="s">&#34;-&#34;</span><span class="o">)</span>
+
+            <span class="k">let</span> <span class="nv">title</span> <span class="o">=</span> <span class="nn">SR</span><span class="p">.</span><span class="n">ChangePrefixNegationToInfixSubtraction</span><span class="bp">()</span>
+
+            <span class="k">let</span> <span class="nv">codeFix</span> <span class="o">=</span>
+                <span class="nn">CodeFixHelpers</span><span class="p">.</span><span class="n">createTextChangeCodeFix</span><span class="o">(</span>
+                    <span class="n">title</span><span class="o">,</span>
+                    <span class="n">context</span><span class="o">,</span>
+                    <span class="o">(</span><span class="k">fun</span> <span class="bp">()</span> <span class="o">-&gt;</span> <span class="n">asyncMaybe</span><span class="o">.</span><span class="n">Return</span> <span class="o">[|</span> <span class="n">TextChange</span><span class="o">(</span><span class="n">TextSpan</span><span class="o">(</span><span class="n">pos</span><span class="o">,</span> <span class="n">1</span><span class="o">),</span> <span class="s">&#34;- &#34;</span><span class="o">)</span> <span class="o">|]))</span>
+
+            <span class="n">context</span><span class="o">.</span><span class="n">RegisterCodeFix</span><span class="o">(</span><span class="n">codeFix</span><span class="o">,</span> <span class="n">diagnostics</span><span class="o">)</span>
+        <span class="o">}</span>
+        <span class="o">|&gt;</span> <span class="nn">Async</span><span class="p">.</span><span class="n">Ignore</span>
+        <span class="o">|&gt;</span> <span class="nn">RoslynHelpers</span><span class="p">.</span><span class="n">StartAsyncUnitAsTask</span><span class="o">(</span><span class="n">context</span><span class="o">.</span><span class="n">CancellationToken</span><span class="o">)</span>
+</code></pre></div><p>Note that the API calls are slightly different here. There is a helper defined called <code>createTextChangeCodeFix</code> that can be used, unlike in the previous example.</p>
+
+
+
+<div class="gblog-post__anchorwrap">
+    <h2 id="harder-quick-fixe-example-checking-the-syntax-tree">
+        Harder quick fixe example: checking the syntax tree
+        <a data-clipboard-text="https://phillipcarter.dev/posts/how-to-make-an-fsharp-code-fixer/#harder-quick-fixe-example-checking-the-syntax-tree" class="gblog-post__anchor gblog-post__anchor--right clip" aria-label="Anchor Harder quick fixe example: checking the syntax tree" href="#harder-quick-fixe-example-checking-the-syntax-tree">
+            <svg class="icon link"><use xlink:href="#link"></use></svg>
+        </a>
+    </h2>
+</div>
+
+<p>Now things get a little more challenging. In the previous two examples, we could either work directly with a span of text in a document and change it, or scan the document to find what we need. But what if that&rsquo;s not enough? In some cases, you need to answer a more complicated question that corresponds to the actual struture of F# source code. Consider the following incorrect code:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="k">let</span> <span class="nv">f</span> <span class="o">(</span><span class="n">x</span><span class="o">:</span> <span class="kt">bool</span><span class="o">)</span> <span class="o">(</span><span class="n">y</span><span class="o">:</span> <span class="kt">bool</span><span class="o">)</span> <span class="o">=</span>
+    <span class="o">!</span><span class="n">x</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">y</span>
+</code></pre></div><p>Someone without much F# (or OCaml) experience might thing that this is a boolean <code>not</code> operation. However, it is not! The <code>!</code> operator is used to dereference a <a class="gblog-post__link" href="https://docs.microsoft.com/en-us/dotnet/fsharp/language-reference/reference-cells">Reference Cell</a>
+. A correct fix would be to use the <code>not</code> operator:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="k">let</span> <span class="nv">f</span> <span class="o">(</span><span class="n">x</span><span class="o">:</span> <span class="kt">bool</span><span class="o">)</span> <span class="o">(</span><span class="n">y</span><span class="o">:</span> <span class="kt">bool</span><span class="o">)</span> <span class="o">=</span>
+    <span class="ow">not</span> <span class="n">x</span> <span class="o">&amp;&amp;</span> <span class="ow">not</span> <span class="n">y</span>
+</code></pre></div><p>The diagnostic triggers on both <code>x</code> and <code>y</code> but it does not contain the text or position of !. Although it&rsquo;s possible to scan in a document to find the <code>!</code>, there&rsquo;s actually a much better approach: using the F# syntax tree APIs. Instead of relying on potentially error-prone custom scanning code, checking if a span of text is contained in a deference call (using <code>!</code>) will always be correct.</p>
+<p>This can be trivially accomplished with a type extension on <code>FSharpParseFileResults</code>:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="k">open</span> <span class="nn">FSharp.Compiler</span>
+<span class="k">open</span> <span class="nn">FSharp.Compiler.Text</span>
+<span class="k">open</span> <span class="nn">FSharp.Compiler.Range</span>
+<span class="k">open</span> <span class="nn">FSharp.Compiler.SourceCodeServices</span>
+
+<span class="o">[&lt;</span><span class="n">AutoOpen</span><span class="o">&gt;]</span>
+<span class="k">module</span> <span class="nn">ParseTreeExtensions</span> <span class="o">=</span>
+    <span class="k">type</span> <span class="nc">FSharpParseFileResults</span> <span class="k">with</span>
+        <span class="k">member</span> <span class="n">scope</span><span class="p">.</span><span class="nf">TryRangeOfRefCellDereferenceContainingPos</span> <span class="n">expressionPos</span> <span class="o">=</span>
+            <span class="k">match</span> <span class="n">scope</span><span class="o">.</span><span class="n">ParseTree</span> <span class="k">with</span>
+            <span class="o">|</span> <span class="n">Some</span> <span class="n">input</span> <span class="o">-&gt;</span>
+                <span class="nn">AstTraversal</span><span class="p">.</span><span class="n">Traverse</span><span class="o">(</span><span class="n">expressionPos</span><span class="o">,</span> <span class="n">input</span><span class="o">,</span> <span class="o">{</span> <span class="k">new</span> <span class="nn">AstTraversal</span><span class="p">.</span><span class="n">AstVisitorBase</span><span class="o">&lt;_&gt;</span><span class="bp">()</span> <span class="k">with</span>
+                    <span class="k">member</span> <span class="n">_</span><span class="p">.</span><span class="nf">VisitExpr</span><span class="o">(_,</span> <span class="o">_,</span> <span class="n">defaultTraverse</span><span class="o">,</span> <span class="n">expr</span><span class="o">)</span> <span class="o">=</span>
+                        <span class="k">match</span> <span class="n">expr</span> <span class="k">with</span>
+                        <span class="o">|</span> <span class="nn">SynExpr</span><span class="p">.</span><span class="n">App</span><span class="o">(_,</span> <span class="k">false</span><span class="o">,</span> <span class="nn">SynExpr</span><span class="p">.</span><span class="n">Ident</span> <span class="n">funcIdent</span><span class="o">,</span> <span class="n">expr</span><span class="o">,</span> <span class="o">_)</span> <span class="o">-&gt;</span>
+                            <span class="k">if</span> <span class="n">funcIdent</span><span class="o">.</span><span class="n">idText</span> <span class="o">=</span> <span class="s">&#34;op_Dereference&#34;</span> <span class="o">&amp;&amp;</span> <span class="n">rangeContainsPos</span> <span class="n">expr</span><span class="o">.</span><span class="n">Range</span> <span class="n">expressionPos</span> <span class="k">then</span>
+                                <span class="n">Some</span> <span class="n">funcIdent</span><span class="o">.</span><span class="n">idRange</span>
+                            <span class="k">else</span>
+                                <span class="n">None</span>
+                        <span class="o">|</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="n">defaultTraverse</span> <span class="n">expr</span> <span class="o">})</span>
+            <span class="o">|</span> <span class="n">None</span> <span class="o">-&gt;</span> <span class="n">None</span>
+</code></pre></div><p>The F# compiler services contain, among other things, a syntax tree visitor that has some default behavior you can override. You still need to implement <code>VisitExpr</code>, which is the exact one we&rsquo;re going to work with here.</p>
+<p>If it looks complicated, don&rsquo;t worry! It&rsquo;s really not too bad. There is just a bit of terminology to understand:</p>
+<ul>
+<li>&ldquo;Range&rdquo; and &ldquo;Pos&rdquo;, such as in the <code>rangeContainsPos</code> call, refer to a range of text in a document (a line/column pair) and a position (a line and a column)</li>
+<li><code>SynExpr.App</code> refers to a function application. All function applications contain a function expression and a argument expression of type <code>SynExpr</code></li>
+<li><code>SynExpr.Ident</code> refers to an identifer in a syntax tree. It has a name (<code>idText</code>) and a range (<code>idRange</code>)</li>
+</ul>
+<p>In this case, the expression <code>!x</code> (or any of variant including arbitrary nesting of parentheses or whitespace) is just a <code>SynExpr.App</code> where the function expression is a <code>SynExpr.Ident</code> with <code>idText</code> of <code>op_Dereference</code>. So we just need to check that a given position is contained in the range of the argument that is being applied to <code>!</code>.</p>
+<p>So, how do we call this? That&rsquo;s where a given editor API comes into play. In the case of Visual Studio, we need to convert from a Roslyn-based span of text to an F# compiler-based range of text (note the difference in terminology). Even though they both refer to the same thing, they have slightly different ways of representing the data.</p>
+<p>We also need to parse a document to get access to an instance of <code>FSharpParseFileResults</code>. So if we refer back to the skeleton source code, the custom logic here is:</p>
+<ol>
+<li>Parse a document</li>
+<li>Convert the code fix context&rsquo;s span of text into an F# range</li>
+<li>Call our extension to <code>FSharpParseFileResults</code></li>
+<li>Apply a code fix to the <code>!</code> if it exists</li>
+</ol>
+<p>Here&rsquo;s the full code snippet of the fixer:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="k">namespace</span> <span class="nn">Microsoft</span><span class="p">.</span><span class="nn">VisualStudio</span><span class="p">.</span><span class="nn">FSharp</span><span class="p">.</span><span class="n">Editor</span>
+
+<span class="k">open</span> <span class="nn">System.Composition</span>
+<span class="k">open</span> <span class="nn">System.Threading.Tasks</span>
+
+<span class="k">open</span> <span class="nn">Microsoft.CodeAnalysis.Text</span>
+<span class="k">open</span> <span class="nn">Microsoft.CodeAnalysis.CodeFixes</span>
+
+<span class="o">[&lt;</span><span class="n">ExportCodeFixProvider</span><span class="o">(</span><span class="nn">FSharpConstants</span><span class="p">.</span><span class="n">FSharpLanguageName</span><span class="o">,</span> <span class="n">Name</span> <span class="o">=</span> <span class="s">&#34;ChangeRefCellDerefToNotExpression&#34;</span><span class="o">);</span> <span class="n">Shared</span><span class="o">&gt;]</span>
+<span class="k">type</span> <span class="nc">internal</span> <span class="n">FSharpChangeRefCellDerefToNotExpressionCodeFixProvider</span>
+    <span class="o">[&lt;</span><span class="n">ImportingConstructor</span><span class="o">&gt;]</span>
+    <span class="o">(</span>
+        <span class="n">checkerProvider</span><span class="o">:</span> <span class="n">FSharpCheckerProvider</span><span class="o">,</span>
+        <span class="n">projectInfoManager</span><span class="o">:</span> <span class="n">FSharpProjectOptionsManager</span>
+    <span class="o">)</span> <span class="o">=</span>
+    <span class="k">inherit</span> <span class="n">CodeFixProvider</span><span class="bp">()</span>
+
+    <span class="k">static</span> <span class="k">let</span> <span class="nv">userOpName</span> <span class="o">=</span> <span class="s">&#34;FSharpChangeRefCellDerefToNotExpressionCodeFix&#34;</span>
+    <span class="k">let</span> <span class="nv">fixableDiagnosticIds</span> <span class="o">=</span> <span class="n">set</span> <span class="o">[</span><span class="s">&#34;FS0001&#34;</span><span class="o">]</span>
+
+    <span class="k">override</span> <span class="n">__</span><span class="p">.</span><span class="nf">FixableDiagnosticIds</span> <span class="o">=</span> <span class="nn">Seq</span><span class="p">.</span><span class="n">toImmutableArray</span> <span class="n">fixableDiagnosticIds</span>
+
+    <span class="k">override</span> <span class="n">this</span><span class="p">.</span><span class="nf">RegisterCodeFixesAsync</span> <span class="n">context</span> <span class="o">:</span> <span class="n">Task</span> <span class="o">=</span>
+        <span class="n">asyncMaybe</span> <span class="o">{</span>
+            <span class="c1">// All of this is setup to be able to parse a document
+</span><span class="c1"></span>            <span class="k">let</span> <span class="nv">document</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">Document</span>
+            <span class="k">let!</span> <span class="nv">parsingOptions</span><span class="o">,</span> <span class="o">_</span> <span class="o">=</span> <span class="n">projectInfoManager</span><span class="o">.</span><span class="n">TryGetOptionsForEditingDocumentOrProject</span><span class="o">(</span><span class="n">document</span><span class="o">,</span> <span class="n">context</span><span class="o">.</span><span class="n">CancellationToken</span><span class="o">,</span> <span class="n">userOpName</span><span class="o">)</span>
+            <span class="k">let!</span> <span class="nv">sourceText</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">Document</span><span class="o">.</span><span class="n">GetTextAsync</span><span class="o">(</span><span class="n">context</span><span class="o">.</span><span class="n">CancellationToken</span><span class="o">)</span>
+
+            <span class="c1">// The actual parsing call, which is slightly complex
+</span><span class="c1"></span>            <span class="k">let!</span> <span class="nv">parseResults</span> <span class="o">=</span> <span class="n">checkerProvider</span><span class="o">.</span><span class="n">Checker</span><span class="o">.</span><span class="n">ParseFile</span><span class="o">(</span><span class="n">document</span><span class="o">.</span><span class="n">FilePath</span><span class="o">,</span> <span class="n">sourceText</span><span class="o">.</span><span class="n">ToFSharpSourceText</span><span class="bp">()</span><span class="o">,</span> <span class="n">parsingOptions</span><span class="o">,</span> <span class="n">userOpName</span><span class="o">)</span> <span class="o">|&gt;</span> <span class="n">liftAsync</span>
+
+            <span class="c1">// Converting to an F# range
+</span><span class="c1"></span>            <span class="k">let</span> <span class="nv">errorRange</span> <span class="o">=</span> <span class="nn">RoslynHelpers</span><span class="p">.</span><span class="n">TextSpanToFSharpRange</span><span class="o">(</span><span class="n">document</span><span class="o">.</span><span class="n">FilePath</span><span class="o">,</span> <span class="n">context</span><span class="o">.</span><span class="n">Span</span><span class="o">,</span> <span class="n">sourceText</span><span class="o">)</span>
+
+            <span class="c1">// Getting a range of a dereference operator
+</span><span class="c1"></span>            <span class="k">let!</span> <span class="nv">derefRange</span> <span class="o">=</span> <span class="n">parseResults</span><span class="o">.</span><span class="n">TryRangeOfRefCellDereferenceContainingPos</span> <span class="n">errorRange</span><span class="o">.</span><span class="n">Start</span>
+
+            <span class="c1">// Converting back into Roslyn-based spans
+</span><span class="c1"></span>            <span class="k">let!</span> <span class="nv">derefSpan</span> <span class="o">=</span> <span class="nn">RoslynHelpers</span><span class="p">.</span><span class="n">TryFSharpRangeToTextSpan</span><span class="o">(</span><span class="n">sourceText</span><span class="o">,</span> <span class="n">derefRange</span><span class="o">)</span>
+
+            <span class="k">let</span> <span class="nv">title</span> <span class="o">=</span> <span class="nn">SR</span><span class="p">.</span><span class="n">UseNotForNegation</span><span class="bp">()</span>
+
+            <span class="k">let</span> <span class="nv">diagnostics</span> <span class="o">=</span>
+                <span class="n">context</span><span class="o">.</span><span class="n">Diagnostics</span>
+                <span class="o">|&gt;</span> <span class="nn">Seq</span><span class="p">.</span><span class="n">filter</span> <span class="o">(</span><span class="k">fun</span> <span class="n">x</span> <span class="o">-&gt;</span> <span class="n">fixableDiagnosticIds</span> <span class="o">|&gt;</span> <span class="nn">Set</span><span class="p">.</span><span class="n">contains</span> <span class="n">x</span><span class="o">.</span><span class="n">Id</span><span class="o">)</span>
+                <span class="o">|&gt;</span> <span class="nn">Seq</span><span class="p">.</span><span class="n">toImmutableArray</span>
+
+            <span class="k">let</span> <span class="nv">codeFix</span> <span class="o">=</span>
+                <span class="nn">CodeFixHelpers</span><span class="p">.</span><span class="n">createTextChangeCodeFix</span><span class="o">(</span>
+                    <span class="n">title</span><span class="o">,</span>
+                    <span class="n">context</span><span class="o">,</span>
+
+                    <span class="c1">// The actual fix is trivial, just place `!` with `not `
+</span><span class="c1"></span>                    <span class="o">(</span><span class="k">fun</span> <span class="bp">()</span> <span class="o">-&gt;</span> <span class="n">asyncMaybe</span><span class="o">.</span><span class="n">Return</span> <span class="o">[|</span> <span class="n">TextChange</span><span class="o">(</span><span class="n">derefSpan</span><span class="o">,</span> <span class="s">&#34;not &#34;</span><span class="o">)</span> <span class="o">|]))</span>
+
+            <span class="n">context</span><span class="o">.</span><span class="n">RegisterCodeFix</span><span class="o">(</span><span class="n">codeFix</span><span class="o">,</span> <span class="n">diagnostics</span><span class="o">)</span>
+        <span class="o">}</span>
+        <span class="o">|&gt;</span> <span class="nn">Async</span><span class="p">.</span><span class="n">Ignore</span>
+        <span class="o">|&gt;</span> <span class="nn">RoslynHelpers</span><span class="p">.</span><span class="n">StartAsyncUnitAsTask</span><span class="o">(</span><span class="n">context</span><span class="o">.</span><span class="n">CancellationToken</span><span class="o">)</span>
+</code></pre></div><p>And that&rsquo;s it! There&rsquo;s a bit of ceremony to get access to the data we need and to convert back and forth between different textual representations, but after that the actual code fix is trivial.</p>
+<p>Harder quick fixer example: analyzing semantics
+Finally, you may also need to analyze F# semantics to be able to offer up a quick fix. Some errors that involve typechecking require you to analyze typecheck results to get the information that you&rsquo;re after.</p>
+<p>Consider the following code:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="k">let</span> <span class="nv">x</span> <span class="o">=</span> <span class="n">12</span>
+<span class="n">x</span> <span class="o">&lt;-</span> <span class="n">13</span>
+</code></pre></div><p>This will fail to compile because we&rsquo;re trying to mutate <code>x</code>, but it isn&rsquo;t declared as <code>mutable</code>. I personally run into this all the time because I won&rsquo;t always know that I want to mutate something until I decide it&rsquo;s necessary, then I have to go back and modify the declaration manually. Why not have a quick fixer do that?</p>
+<p>To make this quick fixer, we need to now also analyze semantics, because we need to find the declaration location of a given value. Specifically, we&rsquo;ll need to do the following:</p>
+<ol>
+<li>Find the F# symbol for <code>x</code> in the erroneous <code>x &lt;- 13</code> call</li>
+<li>Find the declaration of <code>x</code> once we&rsquo;ve resolved it at its use</li>
+<li>Check that it&rsquo;s not a parameter (if it is, we can&rsquo;t declare it as <code>mutable</code>)</li>
+<li>Apply the <code>mutable</code> keyword to the declaration of <code>x</code></li>
+</ol>
+<p>There&rsquo;s more code involved here than before, much of which is just boilerplate needed to be able to get a declaration of a value. Unfortunately, this boilerplate is fairly complex, so I would not classify this kind of code fix as easy.</p>
+<p>This is what the boilerplate needed in Visual Studio to be able to get a declaration looks like, which I&rsquo;ve annotated to the best of my ability:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="c1">// Just setting up some values and doing a quick check
+</span><span class="c1"></span><span class="k">let</span> <span class="nv">document</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">Document</span>
+<span class="k">do</span><span class="o">!</span> <span class="nn">Option</span><span class="p">.</span><span class="n">guard</span> <span class="o">(</span><span class="ow">not</span><span class="o">(</span><span class="n">isSignatureFile</span> <span class="n">document</span><span class="o">.</span><span class="n">FilePath</span><span class="o">))</span>
+<span class="k">let</span> <span class="nv">checker</span> <span class="o">=</span> <span class="n">checkerProvider</span><span class="o">.</span><span class="n">Checker</span>
+
+<span class="c1">// This is critical. Use the START of the diagnostic span
+</span><span class="c1"></span><span class="k">let</span> <span class="nv">position</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">Span</span><span class="o">.</span><span class="n">Start</span>
+
+<span class="c1">// Accessing the data that we need to make certain API calls
+</span><span class="c1"></span><span class="k">let!</span> <span class="nv">parsingOptions</span><span class="o">,</span> <span class="n">projectOptions</span> <span class="o">=</span> <span class="n">projectInfoManager</span><span class="o">.</span><span class="n">TryGetOptionsForEditingDocumentOrProject</span><span class="o">(</span><span class="n">document</span><span class="o">,</span> <span class="nn">CancellationToken</span><span class="p">.</span><span class="n">None</span><span class="o">,</span> <span class="n">userOpName</span><span class="o">)</span>
+<span class="k">let!</span> <span class="nv">sourceText</span> <span class="o">=</span> <span class="n">document</span><span class="o">.</span><span class="n">GetTextAsync</span> <span class="bp">()</span> <span class="o">|&gt;</span> <span class="n">liftTaskAsync</span>
+<span class="k">let</span> <span class="nv">defines</span> <span class="o">=</span> <span class="nn">CompilerEnvironment</span><span class="p">.</span><span class="n">GetCompilationDefinesForEditing</span> <span class="n">parsingOptions</span>
+<span class="k">let</span> <span class="nv">textLine</span> <span class="o">=</span> <span class="n">sourceText</span><span class="o">.</span><span class="n">Lines</span><span class="o">.</span><span class="n">GetLineFromPosition</span> <span class="n">position</span>
+<span class="k">let</span> <span class="nv">textLinePos</span> <span class="o">=</span> <span class="n">sourceText</span><span class="o">.</span><span class="n">Lines</span><span class="o">.</span><span class="n">GetLinePosition</span> <span class="n">position</span>
+<span class="k">let</span> <span class="nv">fcsTextLineNumber</span> <span class="o">=</span> <span class="nn">Line</span><span class="p">.</span><span class="n">fromZ</span> <span class="n">textLinePos</span><span class="o">.</span><span class="n">Line</span>
+
+<span class="c1">// Parse and typecheck a document, getting results for the parsing and typechecking
+</span><span class="c1"></span><span class="k">let!</span> <span class="nv">parseFileResults</span><span class="o">,</span> <span class="o">_,</span> <span class="n">checkFileResults</span> <span class="o">=</span> <span class="n">checker</span><span class="o">.</span><span class="n">ParseAndCheckDocument</span> <span class="o">(</span><span class="n">document</span><span class="o">,</span> <span class="n">projectOptions</span><span class="o">,</span> <span class="n">sourceText</span><span class="o">=</span><span class="n">sourceText</span><span class="o">,</span> <span class="n">userOpName</span><span class="o">=</span><span class="n">userOpName</span><span class="o">)</span>
+
+<span class="c1">// Build a &#34;lexer symbol&#34; - this will quickly isolate the `x` from the rest of the expression and generate an F# SynExpr.Ident that can be used in other API calls
+</span><span class="c1"></span><span class="k">let!</span> <span class="nv">lexerSymbol</span> <span class="o">=</span> <span class="nn">Tokenizer</span><span class="p">.</span><span class="n">getSymbolAtPosition</span> <span class="o">(</span><span class="n">document</span><span class="o">.</span><span class="n">Id</span><span class="o">,</span> <span class="n">sourceText</span><span class="o">,</span> <span class="n">position</span><span class="o">,</span> <span class="n">document</span><span class="o">.</span><span class="n">FilePath</span><span class="o">,</span> <span class="n">defines</span><span class="o">,</span> <span class="nn">SymbolLookupKind</span><span class="p">.</span><span class="n">Greedy</span><span class="o">,</span> <span class="k">false</span><span class="o">,</span> <span class="k">false</span><span class="o">)</span>
+
+<span class="c1">// Finally, get the declaration of the symbol that a position corresponds to
+</span><span class="c1"></span><span class="k">let</span> <span class="nv">decl</span> <span class="o">=</span> <span class="n">checkFileResults</span><span class="o">.</span><span class="n">GetDeclarationLocation</span> <span class="o">(</span><span class="n">fcsTextLineNumber</span><span class="o">,</span> <span class="n">lexerSymbol</span><span class="o">.</span><span class="n">Ident</span><span class="o">.</span><span class="n">idRange</span><span class="o">.</span><span class="n">EndColumn</span><span class="o">,</span> <span class="n">textLine</span><span class="o">.</span><span class="n">ToString</span><span class="bp">()</span><span class="o">,</span> <span class="n">lexerSymbol</span><span class="o">.</span><span class="n">FullIsland</span><span class="o">,</span> <span class="k">false</span><span class="o">)</span>
+<span class="n">It&#39;s</span> <span class="n">quite</span> <span class="n">a</span> <span class="n">lot</span><span class="o">,</span> <span class="ow">and</span> <span class="n">we&#39;re</span> <span class="n">planning</span> <span class="n">on</span> <span class="n">finding</span> <span class="n">ways</span> <span class="k">to</span> <span class="n">improve</span> <span class="n">F</span><span class="o">#</span> <span class="n">compiler</span> <span class="n">service</span> <span class="n">APIs</span> <span class="k">to</span> <span class="n">make</span> <span class="n">this</span> <span class="n">kind</span> <span class="k">of</span> <span class="n">boilerplate</span> <span class="n">no</span> <span class="n">longer</span> <span class="n">necessary</span><span class="o">.</span>
+</code></pre></div><p>Next, we&rsquo;ll also need to detect if the declaration is contained within a parameter or not. We&rsquo;ll need to also have an <code>FSharpParseFileResults</code> extension like before:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="k">open</span> <span class="nn">FSharp.Compiler</span>
+<span class="k">open</span> <span class="nn">FSharp.Compiler.Text</span>
+<span class="k">open</span> <span class="nn">FSharp.Compiler.Range</span>
+<span class="k">open</span> <span class="nn">FSharp.Compiler.SourceCodeServices</span>
+
+<span class="o">[&lt;</span><span class="n">AutoOpen</span><span class="o">&gt;]</span>
+<span class="k">module</span> <span class="nn">ParseTreeExtensions</span> <span class="o">=</span>
+    <span class="k">type</span> <span class="nc">FSharpParseFileResults</span> <span class="k">with</span>
+        <span class="k">member</span> <span class="n">scope</span><span class="p">.</span><span class="nf">IsPositionContainedInACurriedParameter</span> <span class="n">pos</span> <span class="o">=</span>
+            <span class="k">match</span> <span class="n">input</span> <span class="k">with</span>
+            <span class="o">|</span> <span class="n">Some</span> <span class="n">input</span> <span class="o">-&gt;</span>
+                <span class="k">let</span> <span class="nv">result</span> <span class="o">=</span>
+                    <span class="nn">AstTraversal</span><span class="p">.</span><span class="n">Traverse</span><span class="o">(</span><span class="n">pos</span><span class="o">,</span> <span class="n">input</span><span class="o">,</span> <span class="o">{</span> <span class="k">new</span> <span class="nn">AstTraversal</span><span class="p">.</span><span class="n">AstVisitorBase</span><span class="o">&lt;_&gt;</span><span class="bp">()</span> <span class="k">with</span> 
+                        <span class="k">member</span> <span class="n">_</span><span class="p">.</span><span class="nf">VisitExpr</span><span class="o">(_</span><span class="n">path</span><span class="o">,</span> <span class="n">traverseSynExpr</span><span class="o">,</span> <span class="n">defaultTraverse</span><span class="o">,</span> <span class="n">expr</span><span class="o">)</span> <span class="o">=</span>
+                            <span class="n">defaultTraverse</span><span class="o">(</span><span class="n">expr</span><span class="o">)</span>
+
+                        <span class="k">override</span> <span class="n">_</span><span class="p">.</span><span class="nf">VisitBinding</span> <span class="o">(_,</span> <span class="n">binding</span><span class="o">)</span> <span class="o">=</span>
+                            <span class="k">match</span> <span class="n">binding</span> <span class="k">with</span>
+                            <span class="o">|</span> <span class="n">Binding</span><span class="o">(_,</span> <span class="o">_,</span> <span class="o">_,</span> <span class="o">_,</span> <span class="o">_,</span> <span class="o">_,</span> <span class="n">valData</span><span class="o">,</span> <span class="o">_,</span> <span class="o">_,</span> <span class="o">_,</span> <span class="n">range</span><span class="o">,</span> <span class="o">_)</span> <span class="k">when</span> <span class="n">rangeContainsPos</span> <span class="n">range</span> <span class="n">pos</span> <span class="o">-&gt;</span>
+                                <span class="k">let</span> <span class="nv">info</span> <span class="o">=</span> <span class="n">valData</span><span class="o">.</span><span class="n">SynValInfo</span><span class="o">.</span><span class="n">CurriedArgInfos</span>
+                                <span class="k">let</span> <span class="nv">mutable</span> <span class="n">found</span> <span class="o">=</span> <span class="k">false</span>
+                                <span class="k">for</span> <span class="n">group</span> <span class="k">in</span> <span class="n">info</span> <span class="k">do</span>
+                                    <span class="k">for</span> <span class="n">arg</span> <span class="k">in</span> <span class="n">group</span> <span class="k">do</span>
+                                        <span class="k">match</span> <span class="n">arg</span><span class="o">.</span><span class="n">Ident</span> <span class="k">with</span>
+                                        <span class="o">|</span> <span class="n">Some</span> <span class="n">ident</span> <span class="k">when</span> <span class="n">rangeContainsPos</span> <span class="n">ident</span><span class="o">.</span><span class="n">idRange</span> <span class="n">pos</span> <span class="o">-&gt;</span>
+                                            <span class="n">found</span> <span class="o">&lt;-</span> <span class="k">true</span>
+                                        <span class="o">|</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="bp">()</span>
+                                <span class="k">if</span> <span class="n">found</span> <span class="k">then</span> <span class="n">Some</span> <span class="n">range</span> <span class="k">else</span> <span class="n">None</span>
+                            <span class="o">|</span> <span class="o">_</span> <span class="o">-&gt;</span>
+                                <span class="n">None</span>
+                    <span class="o">})</span>
+                <span class="n">result</span><span class="o">.</span><span class="n">IsSome</span>
+            <span class="o">|</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="k">false</span>
+</code></pre></div><p>In this case, we just use <code>defaultTraverse</code> for any arbitary <code>SynExpr</code>, but we override the <code>VisitBinding</code> member. <code>VisitBinding</code> traverses a <code>SynExpr.Binding</code>, which is typicall a let binding. We need to then inspect data called <code>valData</code>, which contains a list of all curried parameter definitions for the binding, if they exist. We then loop through each and detect if the given position is within the range of one of the defined parameter bindings. For example, consider the following:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="k">let</span> <span class="nv">f</span> <span class="o">(</span><span class="n">x</span><span class="o">:</span> <span class="n">int</span><span class="o">)</span> <span class="o">(</span><span class="n">y</span><span class="o">:</span> <span class="n">int</span><span class="o">)</span> <span class="o">=</span>
+    <span class="n">x</span> <span class="o">&lt;-</span> <span class="n">12</span> <span class="c1">// Error
+</span><span class="c1"></span>    <span class="n">y</span>
+</code></pre></div><p>This code will result in <code>x</code> being defined as a parameter. So we can pass the start position of its range to the tree traversal, which will then loop through each parameter until it finds the <code>x</code> definition. It will verify that the range of <code>x</code> contains the position we&rsquo;re after, return true, and then we&rsquo;ll know that <code>x</code> is defined as a parameter!</p>
+<p>Putting it all together looks like this:</p>
+<div class="highlight"><pre class="chroma"><code class="language-fsharp" data-lang="fsharp"><span class="k">namespace</span> <span class="nn">Microsoft</span><span class="p">.</span><span class="nn">VisualStudio</span><span class="p">.</span><span class="nn">FSharp</span><span class="p">.</span><span class="n">Editor</span>
+
+<span class="k">open</span> <span class="nn">System.Composition</span>
+<span class="k">open</span> <span class="nn">System.Threading</span>
+<span class="k">open</span> <span class="nn">System.Threading.Tasks</span>
+
+<span class="k">open</span> <span class="nn">Microsoft.CodeAnalysis.Text</span>
+<span class="k">open</span> <span class="nn">Microsoft.CodeAnalysis.CodeFixes</span>
+
+<span class="k">open</span> <span class="nn">FSharp.Compiler.Range</span>
+<span class="k">open</span> <span class="nn">FSharp.Compiler.SourceCodeServices</span>
+<span class="k">open</span> <span class="nn">FSharp.Compiler.AbstractIL.Internal.Library</span>
+
+<span class="o">[&lt;</span><span class="n">ExportCodeFixProvider</span><span class="o">(</span><span class="nn">FSharpConstants</span><span class="p">.</span><span class="n">FSharpLanguageName</span><span class="o">,</span> <span class="n">Name</span> <span class="o">=</span> <span class="s">&#34;MakeDeclarationMutable&#34;</span><span class="o">);</span> <span class="n">Shared</span><span class="o">&gt;]</span>
+<span class="k">type</span> <span class="nc">internal</span> <span class="n">FSharpMakeDeclarationMutableFixProvider</span>
+    <span class="o">[&lt;</span><span class="n">ImportingConstructor</span><span class="o">&gt;]</span>
+    <span class="o">(</span>
+        <span class="n">checkerProvider</span><span class="o">:</span> <span class="n">FSharpCheckerProvider</span><span class="o">,</span> 
+        <span class="n">projectInfoManager</span><span class="o">:</span> <span class="n">FSharpProjectOptionsManager</span>
+    <span class="o">)</span> <span class="o">=</span>
+    <span class="k">inherit</span> <span class="n">CodeFixProvider</span><span class="bp">()</span>
+
+    <span class="k">static</span> <span class="k">let</span> <span class="nv">userOpName</span> <span class="o">=</span> <span class="s">&#34;MakeDeclarationMutable&#34;</span>
+
+    <span class="k">let</span> <span class="nv">fixableDiagnosticIds</span> <span class="o">=</span> <span class="n">set</span> <span class="o">[</span><span class="s">&#34;FS0027&#34;</span><span class="o">]</span>
+
+    <span class="k">override</span> <span class="n">_</span><span class="p">.</span><span class="nf">FixableDiagnosticIds</span> <span class="o">=</span> <span class="nn">Seq</span><span class="p">.</span><span class="n">toImmutableArray</span> <span class="n">fixableDiagnosticIds</span>
+
+    <span class="k">override</span> <span class="n">_</span><span class="p">.</span><span class="nf">RegisterCodeFixesAsync</span> <span class="n">context</span> <span class="o">:</span> <span class="n">Task</span> <span class="o">=</span>
+        <span class="n">asyncMaybe</span> <span class="o">{</span>
+            <span class="k">let</span> <span class="nv">diagnostics</span> <span class="o">=</span>
+                <span class="n">context</span><span class="o">.</span><span class="n">Diagnostics</span>
+                <span class="o">|&gt;</span> <span class="nn">Seq</span><span class="p">.</span><span class="n">filter</span> <span class="o">(</span><span class="k">fun</span> <span class="n">x</span> <span class="o">-&gt;</span> <span class="n">fixableDiagnosticIds</span> <span class="o">|&gt;</span> <span class="nn">Set</span><span class="p">.</span><span class="n">contains</span> <span class="n">x</span><span class="o">.</span><span class="n">Id</span><span class="o">)</span>
+                <span class="o">|&gt;</span> <span class="nn">Seq</span><span class="p">.</span><span class="n">toImmutableArray</span>
+
+            <span class="k">let</span> <span class="nv">document</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">Document</span>
+            <span class="k">do</span><span class="o">!</span> <span class="nn">Option</span><span class="p">.</span><span class="n">guard</span> <span class="o">(</span><span class="ow">not</span><span class="o">(</span><span class="n">isSignatureFile</span> <span class="n">document</span><span class="o">.</span><span class="n">FilePath</span><span class="o">))</span>
+            <span class="k">let</span> <span class="nv">position</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">Span</span><span class="o">.</span><span class="n">Start</span>
+            <span class="k">let</span> <span class="nv">checker</span> <span class="o">=</span> <span class="n">checkerProvider</span><span class="o">.</span><span class="n">Checker</span>
+            <span class="k">let!</span> <span class="nv">parsingOptions</span><span class="o">,</span> <span class="n">projectOptions</span> <span class="o">=</span> <span class="n">projectInfoManager</span><span class="o">.</span><span class="n">TryGetOptionsForEditingDocumentOrProject</span><span class="o">(</span><span class="n">document</span><span class="o">,</span> <span class="nn">CancellationToken</span><span class="p">.</span><span class="n">None</span><span class="o">,</span> <span class="n">userOpName</span><span class="o">)</span>
+            <span class="k">let!</span> <span class="nv">sourceText</span> <span class="o">=</span> <span class="n">document</span><span class="o">.</span><span class="n">GetTextAsync</span> <span class="bp">()</span> <span class="o">|&gt;</span> <span class="n">liftTaskAsync</span>
+            <span class="k">let</span> <span class="nv">defines</span> <span class="o">=</span> <span class="nn">CompilerEnvironment</span><span class="p">.</span><span class="n">GetCompilationDefinesForEditing</span> <span class="n">parsingOptions</span>
+            <span class="k">let</span> <span class="nv">textLine</span> <span class="o">=</span> <span class="n">sourceText</span><span class="o">.</span><span class="n">Lines</span><span class="o">.</span><span class="n">GetLineFromPosition</span> <span class="n">position</span>
+            <span class="k">let</span> <span class="nv">textLinePos</span> <span class="o">=</span> <span class="n">sourceText</span><span class="o">.</span><span class="n">Lines</span><span class="o">.</span><span class="n">GetLinePosition</span> <span class="n">position</span>
+            <span class="k">let</span> <span class="nv">fcsTextLineNumber</span> <span class="o">=</span> <span class="nn">Line</span><span class="p">.</span><span class="n">fromZ</span> <span class="n">textLinePos</span><span class="o">.</span><span class="n">Line</span>
+            <span class="k">let!</span> <span class="nv">parseFileResults</span><span class="o">,</span> <span class="o">_,</span> <span class="n">checkFileResults</span> <span class="o">=</span> <span class="n">checker</span><span class="o">.</span><span class="n">ParseAndCheckDocument</span> <span class="o">(</span><span class="n">document</span><span class="o">,</span> <span class="n">projectOptions</span><span class="o">,</span> <span class="n">sourceText</span><span class="o">=</span><span class="n">sourceText</span><span class="o">,</span> <span class="n">userOpName</span><span class="o">=</span><span class="n">userOpName</span><span class="o">)</span>
+            <span class="k">let!</span> <span class="nv">lexerSymbol</span> <span class="o">=</span> <span class="nn">Tokenizer</span><span class="p">.</span><span class="n">getSymbolAtPosition</span> <span class="o">(</span><span class="n">document</span><span class="o">.</span><span class="n">Id</span><span class="o">,</span> <span class="n">sourceText</span><span class="o">,</span> <span class="n">position</span><span class="o">,</span> <span class="n">document</span><span class="o">.</span><span class="n">FilePath</span><span class="o">,</span> <span class="n">defines</span><span class="o">,</span> <span class="nn">SymbolLookupKind</span><span class="p">.</span><span class="n">Greedy</span><span class="o">,</span> <span class="k">false</span><span class="o">,</span> <span class="k">false</span><span class="o">)</span>
+            <span class="k">let</span> <span class="nv">decl</span> <span class="o">=</span> <span class="n">checkFileResults</span><span class="o">.</span><span class="n">GetDeclarationLocation</span> <span class="o">(</span><span class="n">fcsTextLineNumber</span><span class="o">,</span> <span class="n">lexerSymbol</span><span class="o">.</span><span class="n">Ident</span><span class="o">.</span><span class="n">idRange</span><span class="o">.</span><span class="n">EndColumn</span><span class="o">,</span> <span class="n">textLine</span><span class="o">.</span><span class="n">ToString</span><span class="bp">()</span><span class="o">,</span> <span class="n">lexerSymbol</span><span class="o">.</span><span class="n">FullIsland</span><span class="o">,</span> <span class="k">false</span><span class="o">)</span>
+
+            <span class="k">match</span> <span class="n">decl</span> <span class="k">with</span>
+            <span class="c1">// Only do this for symbols in the same file. That covers almost all cases anyways.
+</span><span class="c1"></span>            <span class="c1">// We really shouldn&#39;t encourage making values mutable outside of local scopes anyways.
+</span><span class="c1"></span>            <span class="o">|</span> <span class="nn">FSharpFindDeclResult</span><span class="p">.</span><span class="n">DeclFound</span> <span class="n">declRange</span> <span class="k">when</span> <span class="n">declRange</span><span class="o">.</span><span class="n">FileName</span> <span class="o">=</span> <span class="n">document</span><span class="o">.</span><span class="n">FilePath</span> <span class="o">-&gt;</span>
+                <span class="k">let!</span> <span class="nv">span</span> <span class="o">=</span> <span class="nn">RoslynHelpers</span><span class="p">.</span><span class="n">TryFSharpRangeToTextSpan</span><span class="o">(</span><span class="n">sourceText</span><span class="o">,</span> <span class="n">declRange</span><span class="o">)</span>
+
+                <span class="c1">// Bail if it&#39;s a parameter, because like, that ain&#39;t allowed
+</span><span class="c1"></span>                <span class="k">do</span><span class="o">!</span> <span class="nn">Option</span><span class="p">.</span><span class="n">guard</span> <span class="o">(</span><span class="ow">not</span> <span class="o">(</span><span class="n">parseFileResults</span><span class="o">.</span><span class="n">IsPositionContainedInACurriedParameter</span> <span class="n">declRange</span><span class="o">.</span><span class="n">Start</span><span class="o">))</span>
+
+                <span class="k">let</span> <span class="nv">title</span> <span class="o">=</span> <span class="nn">SR</span><span class="p">.</span><span class="n">MakeDeclarationMutable</span><span class="bp">()</span>
+                <span class="k">let</span> <span class="nv">codeFix</span> <span class="o">=</span>
+                    <span class="nn">CodeFixHelpers</span><span class="p">.</span><span class="n">createTextChangeCodeFix</span><span class="o">(</span>
+                        <span class="n">title</span><span class="o">,</span>
+                        <span class="n">context</span><span class="o">,</span>
+                        <span class="o">(</span><span class="k">fun</span> <span class="bp">()</span> <span class="o">-&gt;</span> <span class="n">asyncMaybe</span><span class="o">.</span><span class="n">Return</span> <span class="o">[|</span> <span class="n">TextChange</span><span class="o">(</span><span class="n">TextSpan</span><span class="o">(</span><span class="n">span</span><span class="o">.</span><span class="n">Start</span><span class="o">,</span> <span class="n">0</span><span class="o">),</span> <span class="s">&#34;mutable &#34;</span><span class="o">)</span> <span class="o">|]))</span>
+
+                <span class="n">context</span><span class="o">.</span><span class="n">RegisterCodeFix</span><span class="o">(</span><span class="n">codeFix</span><span class="o">,</span> <span class="n">diagnostics</span><span class="o">)</span>
+            <span class="o">|</span> <span class="o">_</span> <span class="o">-&gt;</span>
+                <span class="bp">()</span>
+        <span class="o">}</span>
+        <span class="o">|&gt;</span> <span class="nn">Async</span><span class="p">.</span><span class="n">Ignore</span>
+        <span class="o">|&gt;</span> <span class="nn">RoslynHelpers</span><span class="p">.</span><span class="n">StartAsyncUnitAsTask</span><span class="o">(</span><span class="n">context</span><span class="o">.</span><span class="n">CancellationToken</span><span class="o">)</span>
+</code></pre></div><p>And that&rsquo;s it!</p>
+
+
+
+<div class="gblog-post__anchorwrap">
+    <h2 id="contribute-your-own-code-fixer">
+        Contribute your own code fixer
+        <a data-clipboard-text="https://phillipcarter.dev/posts/how-to-make-an-fsharp-code-fixer/#contribute-your-own-code-fixer" class="gblog-post__anchor gblog-post__anchor--right clip" aria-label="Anchor Contribute your own code fixer" href="#contribute-your-own-code-fixer">
+            <svg class="icon link"><use xlink:href="#link"></use></svg>
+        </a>
+    </h2>
+</div>
+
+<p>If you&rsquo;ve made it this far, you should be armed to add all kinds of code fixers. There is actually another class of fixer that I can discuss in another blog post, where we pair a code analyzer that raises custom diagnostics with a fixer that acts on those diagnostics. But the contents of this post should be enough to add lots of different kinds of fixers.</p>
+<p>If you want to add one to Visual Studio, check out the fixers in the CodeFix folder. You can copy/paste one into a new file and change stuff as you go. Syntax tree extensions are typically moved into the F# compiler API itself, and with corresponding unit tests. But we can help you get that stuff added correctly during code review.</p>
+<p>If you want to add one to VSCode, check out the CodeFixes file and take a look at the variety of code fixers available there and add a new one. I advise looking through the git history of the file to see where various helpers, such as syntax tree extensions, are located.</p>
+<p>Happy code fixing!</p>
+]]></content><category scheme="https://phillipcarter.dev/tags/fsharp" term="fsharp" label="fsharp"/><category scheme="https://phillipcarter.dev/tags/visual-studio" term="visual-studio" label="Visual Studio"/></entry></feed>
