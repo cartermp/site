@@ -69,17 +69,13 @@ outputs:
 enableRobotsTXT: true
 
 params:
-  subtitle: poopy butthole
+  subtitle: Usually writing about F#
   description: >
-    hugo-geekblog is a simple Hugo theme for personal blogs. This page is theme documentation
-    and powered by the latest version of hugo-geekblog itself.
+    This is Phillip Carter's blog. It's mostly about F# stuff.
   images:
     - "favicon/android-chrome-512x512.png"
 
   geekblogToC: 3
-  geekblogAuthor: john-doe
-
-  geekblogLegalNotice: https://thegeeklab.de/legal-notice/#contact-information
-  geekblogPrivacyPolicy: https://thegeeklab.de/legal-notice/#privacy-policy
+  geekblogAuthor: phillip
 
   geekblogImageLazyLoading: true

@@ -17,7 +17,7 @@ geekblogHidden: false
 geekblogAnchor: true
 ---
 
-As of this month, I will have been employed at Microsoft for 5 years. I joined the .NET team when I was 24 years old. Now at 29, I'm still here and thoroughly enjoying it. It's been a great time overall. I've learned so much more than I ever would have imagined, met so many wonderful people, and helped make some things that people enjoy. Here's what I remember the most in those years.
+As of the time of writing (2020-06-06), I will have been employed at Microsoft for 5 years. I joined the .NET team when I was 24 years old. Now at 29, I'm still here and thoroughly enjoying it. It's been a great time overall. I've learned so much more than I ever would have imagined, met so many wonderful people, and helped make some things that people enjoy. Here's what I remember the most in those years.
 
 This turned out to be long. Sorry about that!
 
